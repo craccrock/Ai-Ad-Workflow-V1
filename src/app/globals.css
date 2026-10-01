@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+/*
+ * Madaket Brands design tokens (source of truth: madaketbrands.com).
+ * Single committed look: warm cream on deep navy. No light mode.
+ */
+:root {
+  --navy: #1e2a4a;
+  --navy-surface: #263354;
+  --navy-elevated: #2e3d62;
+  --navy-input: #1a2340;
+  --cream: #f5f0e8;
+  --cream-secondary: #b8b0a0;
+  --cream-muted: #7a7568;
+  --gold: #c4a87c;
+  --gold-hover: #d2b88e;
+  --danger: #e05252;
+  --success: #4aba7a;
+  --hairline: rgba(255, 255, 255, 0.08);
+  --input-border: rgba(255, 255, 255, 0.1);
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-navy: var(--navy);
+  --color-surface: var(--navy-surface);
+  --color-elevated: var(--navy-elevated);
+  --color-field: var(--navy-input);
+  --color-cream: var(--cream);
+  --color-cream-2: var(--cream-secondary);
+  --color-muted: var(--cream-muted);
+  --color-gold: var(--gold);
+  --color-gold-hover: var(--gold-hover);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-hairline: var(--hairline);
+  --color-field-border: var(--input-border);
+
+  /* shadcn-style semantic aliases */
+  --color-background: var(--navy);
+  --color-foreground: var(--cream);
+  --color-card: var(--navy-surface);
+  --color-border: var(--hairline);
+  --color-ring: var(--gold);
+
+  --font-serif: var(--font-playfair), "EB Garamond", Georgia, serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SFMono-Regular", monospace;
+
+  --radius-card: 8px;
+
+  --animate-shimmer: shimmer 1.8s ease-in-out infinite;
+  @keyframes shimmer {
+    0% { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
+  }
+}
+
+html,
+body {
+  background: var(--navy);
+  color: var(--cream);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(196, 168, 124, 0.35);
+  color: var(--cream);
+}
+
+/* Understated scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+.shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.07) 50%, rgba(255,255,255,0.02) 100%);
+  background-size: 800px 100%;
+  animation: var(--animate-shimmer);
+}
+
+/* Range input styled to the palette */
+input[type="range"] {
+  accent-color: var(--gold);
+}

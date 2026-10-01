@@ -1,0 +1,47 @@
+{
+  "name": "madaket-gen-studio",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "node --conditions=react-server --experimental-test-module-mocks --import tsx --test scripts/*.test.ts scripts/*.test.mts",
+    "create-admin": "node --env-file=.env.local scripts/create-admin.mjs",
+    "set-password": "node --env-file=.env.local scripts/set-password.mjs"
+  },
+  "dependencies": {
+    "@google/genai": "^2.22.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.116.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
+    "fflate": "^0.8.3",
+    "lucide-react": "^1.46.0",
+    "mcp-handler": "^2.2.0",
+    "next": "16.3.8",
+    "radix-ui": "^1.6.7",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "recharts": "^3.10.1",
+    "server-only": "^0.0.1",
+    "sonner": "^2.0.8",
+    "tailwind-merge": "^3.7.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.8",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.13",
+    "typescript": "^5"
+  }
+}
