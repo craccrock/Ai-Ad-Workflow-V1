@@ -9,8 +9,8 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "node --conditions=react-server --experimental-test-module-mocks --import tsx --test scripts/*.test.ts scripts/*.test.mts",
-    "create-admin": "node --env-file=.env.local scripts/create-admin.mjs",
-    "set-password": "node --env-file=.env.local scripts/set-password.mjs"
+    "create-admin": "node --experimental-websocket --env-file=.env.local scripts/create-admin.mjs",
+    "set-password": "node --experimental-websocket --env-file=.env.local scripts/set-password.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.22.0",
