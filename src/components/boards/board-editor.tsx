@@ -235,11 +235,18 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     [flush, initial.id],
   );
 
-  // Poll every in-flight generation shown on the board.
+  // Poll every in-flight generation shown on the board, rescheduling until none are left.
+  const gensRef = useRef(gens);
   useEffect(() => {
-    const inflight = Object.values(gens).filter(isInFlight);
-    if (!inflight.length) return;
-    const t = setTimeout(async () => {
+    gensRef.current = gens;
+  }, [gens]);
+  const hasInflight = Object.values(gens).some(isInFlight);
+  useEffect(() => {
+    if (!hasInflight) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      const inflight = Object.values(gensRef.current).filter(isInFlight);
       await Promise.all(
         inflight.map(async (g) => {
           try {
@@ -253,9 +260,14 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
           }
         }),
       );
-    }, POLL_MS);
-    return () => clearTimeout(t);
-  }, [gens]);
+      if (!stopped) timer = setTimeout(tick, POLL_MS);
+    };
+    timer = setTimeout(tick, POLL_MS);
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [hasInflight]);
 
   const waitFor = (genId: string) =>
     new Promise<void>((resolve) => {
