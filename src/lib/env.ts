@@ -51,6 +51,10 @@ export const env = {
     const value = raw ? Number(raw) : 7;
     return Number.isFinite(value) && value > 0 ? value : 7;
   },
+  /** Runs the beat splitter on the Boards page. Optional: the splitter reports a clear error without it. */
+  get anthropicApiKey(): string | undefined {
+    return process.env.ANTHROPIC_API_KEY || undefined;
+  },
   get cronSecret(): string | undefined {
     return process.env.CRON_SECRET || undefined;
   },

@@ -8,6 +8,10 @@ export const maxDuration = 120;
 const listSchema = z.object({
   type: z.enum(["image", "video", "audio"]).optional(),
   source: z.enum(["uploads", "generated"]).optional(),
+  /** Imported B-roll folder name, e.g. "Cryo therapy treatment". */
+  folder: z.string().max(200).optional(),
+  /** Case-insensitive match on filename, folder or tags. */
+  q: z.string().max(200).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(48),
 });
@@ -27,6 +31,11 @@ export async function GET(request: Request) {
     if (q.type) query = query.eq("type", q.type);
     if (q.source === "uploads") query = query.is("generation_id", null);
     if (q.source === "generated") query = query.not("generation_id", "is", null);
+    if (q.folder) query = query.eq("folder", q.folder);
+    if (q.q?.trim()) {
+      const needle = q.q.trim().replace(/[%_,]/g, " ");
+      query = query.or(`filename.ilike.%${needle}%,folder.ilike.%${needle}%,tags.cs.{${needle.toLowerCase()}}`);
+    }
 
     const offset = (q.page - 1) * q.limit;
     const { data, count, error } = await query.range(offset, offset + q.limit - 1);

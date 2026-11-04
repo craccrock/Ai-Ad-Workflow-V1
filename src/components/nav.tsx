@@ -12,11 +12,13 @@ export function Nav({ profile }: { profile: Profile }) {
   const pathname = usePathname();
   const links = [
     { href: "/", label: "Studio" },
+    { href: "/boards", label: "Boards" },
     { href: "/library", label: "Library" },
     ...(profile.role === "admin"
       ? [
           { href: "/admin", label: "Spend" },
           { href: "/admin/team", label: "Team & API" },
+          { href: "/admin/settings", label: "Settings" },
         ]
       : []),
   ];

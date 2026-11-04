@@ -10,9 +10,11 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "node --conditions=react-server --experimental-test-module-mocks --import tsx --test scripts/*.test.ts scripts/*.test.mts",
     "create-admin": "node --experimental-websocket --env-file=.env.local scripts/create-admin.mjs",
-    "set-password": "node --experimental-websocket --env-file=.env.local scripts/set-password.mjs"
+    "set-password": "node --experimental-websocket --env-file=.env.local scripts/set-password.mjs",
+    "import-broll": "node --experimental-websocket --env-file=.env.local scripts/import-broll.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.4.0",
     "@google/genai": "^2.22.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@supabase/ssr": "^0.12.7",

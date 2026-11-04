@@ -1,3 +1,5 @@
+import type { ApiGeneration } from "@/lib/client-api";
+
 export type Role = "admin" | "editor";
 
 export type Profile = {
@@ -102,5 +104,77 @@ export type Media = {
   file_size_bytes: number | null;
   metadata: { width?: number; height?: number; duration_seconds?: number; mime_type?: string } | null;
   generation_id: string | null;
+  /** Imported B-roll: source folder name, folder + filename words, and the original path on disk. */
+  folder?: string | null;
+  tags?: string[];
+  source_path?: string | null;
   created_at: string;
+};
+
+// ─── B-roll Starter Image Board ──────────────────────────────────────────────
+
+export type Subject = {
+  id: string;
+  user_id: string;
+  name: string;
+  media_id: string | null;
+  base_prompt: string;
+  is_default: boolean;
+  created_at: string;
+  /** Joined base image. */
+  media?: Media | null;
+};
+
+export type BeatRole = "aroll" | "broll";
+
+export type ReferencePlan = {
+  subject_lock?: boolean;
+  pose_ref?: string;
+  setting_ref?: string;
+  mode?: "new" | "reuse" | "edit" | string;
+  library_asset?: string;
+  edit_note?: string;
+};
+
+export type Beat = {
+  id: string;
+  board_id: string;
+  position: number;
+  role: BeatRole;
+  vo: string;
+  shot_type: string | null;
+  style: string | null;
+  image_prompt: string;
+  video_prompt: string | null;
+  negative_prompt: string | null;
+  reference_plan: ReferencePlan | null;
+  use_subject_lock: boolean;
+  pose_media_id: string | null;
+  setting_media_id: string | null;
+  generation_id: string | null;
+  generation_ids: string[];
+  created_at: string;
+};
+
+export type Board = {
+  id: string;
+  user_id: string;
+  title: string;
+  script: string;
+  subject_id: string | null;
+  model: string;
+  aspect_ratio: string;
+  resolution: string;
+  brain_output: { subject_lock?: string; style_locks?: Record<string, string> } | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** A board as the editor loads it: beats in order plus every media row and generation they point at. */
+export type BoardWithBeats = Board & {
+  subject: Subject | null;
+  beats: Beat[];
+  media: Record<string, Media>;
+  /** Serialized like the REST API (see serializeGeneration): `error` instead of `error_message`. */
+  generations: Record<string, ApiGeneration>;
 };

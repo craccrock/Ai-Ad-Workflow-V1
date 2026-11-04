@@ -1,11 +1,11 @@
 "use client";
 
 import { FolderOpen, Loader2, Music, Upload, Video, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { LibraryPicker } from "@/components/library/library-picker";
 import { ImageThumb, VideoThumb } from "@/components/ui/thumb";
-import { api, type ApiMedia, type Paginated } from "@/lib/client-api";
+import type { ApiMedia } from "@/lib/client-api";
 import type { MediaType } from "@/lib/types";
 import { ACCEPT, mediaTypeOf, uploadMedia } from "@/lib/upload";
 import { cn } from "@/lib/utils";
@@ -15,58 +15,6 @@ export type MediaRef = { url: string; name: string; mediaId?: string; durationSe
 
 export function refFromMedia(m: ApiMedia): MediaRef {
   return { url: m.url, name: m.filename, mediaId: m.id, durationSeconds: m.metadata?.duration_seconds, width: m.metadata?.width, height: m.metadata?.height };
-}
-
-function LibraryPicker({ type, open, onOpenChange, onPick }: { type: MediaType; open: boolean; onOpenChange: (o: boolean) => void; onPick: (m: ApiMedia) => void }) {
-  const [items, setItems] = useState<ApiMedia[] | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    api<Paginated<ApiMedia>>(`/api/media?type=${type}&limit=60`)
-      .then((r) => !cancelled && setItems(r.data))
-      .catch((e) => toast.error(e.message));
-    return () => {
-      cancelled = true;
-    };
-  }, [open, type]);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title={`Choose ${type === "audio" ? "audio" : `an ${type}`} from the library`} wide>
-        {!items ? (
-          <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">{Array.from({ length: 10 }, (_, i) => <div key={i} className="shimmer aspect-square rounded-[6px]" />)}</div>
-        ) : items.length === 0 ? (
-          <p className="py-10 text-center text-sm text-cream-2">Nothing here yet — upload one instead.</p>
-        ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
-            {items.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => {
-                  onPick(m);
-                  onOpenChange(false);
-                }}
-                className="group overflow-hidden rounded-[6px] border border-hairline bg-field text-left hover:border-gold"
-              >
-                <div className="relative flex aspect-square items-center justify-center overflow-hidden bg-navy">
-                  {m.type === "image" ? (
-                    <ImageThumb src={m.url} alt="" sizes="160px" className="object-cover" />
-                  ) : m.type === "video" ? (
-                    <VideoThumb src={m.url} className="h-full w-full object-cover" />
-                  ) : (
-                    <Music className="size-8 text-cream-2" />
-                  )}
-                </div>
-                <div className="truncate px-2 py-1.5 text-[11px] text-cream-2">{m.filename}</div>
-              </button>
-            ))}
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 /**
