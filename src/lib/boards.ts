@@ -31,6 +31,7 @@ export async function loadBoardWithBeats(board: Board): Promise<BoardWithBeats> 
   for (const b of list) {
     if (b.pose_media_id) mediaIds.add(b.pose_media_id);
     if (b.setting_media_id) mediaIds.add(b.setting_media_id);
+    for (const id of b.extra_media_ids ?? []) mediaIds.add(id);
     if (b.generation_id) genIds.add(b.generation_id);
   }
   if (subject?.media_id) mediaIds.add(subject.media_id);
@@ -154,6 +155,7 @@ export async function splitBoard(board: Board, subject: Subject | null): Promise
       use_subject_lock: plan.subject_lock !== false,
       pose_media_id: pose?.id ?? null,
       setting_media_id: setting?.id ?? null,
+      extra_media_ids: [],
     };
   });
 
@@ -177,12 +179,15 @@ export function beatPrompt(beat: Beat): string {
   return parts.join("\n\n");
 }
 
-/** Reference images for a beat, in slot order: subject lock, pose/action, setting. Empty slots are skipped. */
+/** Reference images for a beat, in slot order: subject lock, pose/action, setting, then extras. Empty slots are skipped. */
 export function beatReferences(beat: Beat, subject: Subject | null, media: Record<string, Media>): { url: string; slot: string }[] {
   const refs: { url: string; slot: string }[] = [];
   if (beat.use_subject_lock && subject?.media?.url) refs.push({ url: subject.media.url, slot: "subject" });
   if (beat.pose_media_id && media[beat.pose_media_id]) refs.push({ url: media[beat.pose_media_id].url, slot: "pose" });
   if (beat.setting_media_id && media[beat.setting_media_id]) refs.push({ url: media[beat.setting_media_id].url, slot: "setting" });
+  (beat.extra_media_ids ?? []).forEach((id, i) => {
+    if (media[id]) refs.push({ url: media[id].url, slot: `extra ${i + 1}` });
+  });
   return refs;
 }
 

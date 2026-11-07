@@ -15,7 +15,7 @@ import type { Beat, Media, Subject } from "@/lib/types";
 import { cn, formatUsd } from "@/lib/utils";
 import { RefSlot } from "./ref-slot";
 
-export type BeatPatch = Partial<Pick<Beat, "role" | "vo" | "image_prompt" | "use_subject_lock" | "pose_media_id" | "setting_media_id" | "negative_prompt" | "shot_type" | "style">>;
+export type BeatPatch = Partial<Pick<Beat, "role" | "vo" | "image_prompt" | "use_subject_lock" | "pose_media_id" | "setting_media_id" | "extra_media_ids" | "negative_prompt" | "shot_type" | "style">>;
 
 const isInFlight = (g?: ApiGeneration | null) => g?.status === "queued" || g?.status === "processing";
 
@@ -159,6 +159,8 @@ export function BeatCard({
   const [splitOpen, setSplitOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
   const [repromptOpen, setRepromptOpen] = useState(false);
+  /** Empty extra slots opened with "Add reference" that have no image yet. */
+  const [pendingExtras, setPendingExtras] = useState(0);
   const [direction, setDirection] = useState("");
   const [reprompting, setReprompting] = useState(false);
   const directionRef = useRef<HTMLTextAreaElement>(null);
@@ -194,6 +196,25 @@ export function BeatCard({
     if (m) onMedia(m);
     onPatch({ [key]: m?.id ?? null });
   };
+  const extras = beat.extra_media_ids ?? [];
+  const MAX_EXTRAS = 5; // Nano Banana Pro takes 8 references on Kie: 3 fixed slots + 5 extras
+  const setExtra = (i: number) => (m: ApiMedia | null) => {
+    if (m) {
+      onMedia(m);
+      const next = [...extras];
+      if (i < next.length) next[i] = m.id;
+      else {
+        next.push(m.id);
+        setPendingExtras((n) => Math.max(0, n - 1));
+      }
+      onPatch({ extra_media_ids: next });
+    } else if (i < extras.length) {
+      onPatch({ extra_media_ids: extras.filter((_, j) => j !== i) });
+    } else {
+      setPendingExtras((n) => Math.max(0, n - 1));
+    }
+  };
+  const fixedCount = 3;
 
   return (
     <article className={cn("rounded-[8px] border bg-surface", broll ? "border-hairline" : "border-hairline/60 opacity-80")} id={`beat-${beat.id}`}>
@@ -327,7 +348,19 @@ export function BeatCard({
                 </div>
                 <RefSlot label="Pose" hint={plan.pose_ref && !beat.pose_media_id ? `wanted: ${plan.pose_ref}` : undefined} media={beat.pose_media_id ? media[beat.pose_media_id] : null} userId={userId} onChange={pick("pose_media_id")} disabled={!canEdit} compact />
                 <RefSlot label="Setting" hint={plan.setting_ref && !beat.setting_media_id ? plan.setting_ref : undefined} media={beat.setting_media_id ? media[beat.setting_media_id] : null} userId={userId} onChange={pick("setting_media_id")} disabled={!canEdit} compact />
+                {extras.map((id, i) => (
+                  <RefSlot key={`${id}-${i}`} label={`Image ${fixedCount + i + 1}`} media={media[id] ?? null} userId={userId} onChange={setExtra(i)} disabled={!canEdit} compact />
+                ))}
+                {Array.from({ length: pendingExtras }, (_, k) => (
+                  <RefSlot key={`pending-${k}`} label={`Image ${fixedCount + extras.length + k + 1}`} media={null} userId={userId} onChange={setExtra(extras.length + k)} disabled={!canEdit} compact />
+                ))}
               </div>
+              {canEdit && extras.length + pendingExtras < MAX_EXTRAS ? (
+                <button type="button" onClick={() => setPendingExtras((n) => n + 1)} className="mt-2 flex items-center gap-1 text-[11px] text-gold hover:text-cream">
+                  <Plus className="size-3" /> Add reference image
+                </button>
+              ) : null}
+              <p className="mt-1 text-[10px] text-muted">Images are sent to the model in this order; refer to them in the prompt as &ldquo;image 1&rdquo;, &ldquo;image 2&rdquo;&hellip; counting only the filled slots.</p>
             </div>
           ) : (
             <p className="text-[11px] text-muted">A-roll: covered by the talking head, no starter image needed. Switch to B-roll to generate one.</p>

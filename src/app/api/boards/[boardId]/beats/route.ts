@@ -18,6 +18,7 @@ const beatSchema = z.object({
   use_subject_lock: z.boolean().default(true),
   pose_media_id: z.string().uuid().nullable().optional(),
   setting_media_id: z.string().uuid().nullable().optional(),
+  extra_media_ids: z.array(z.string().uuid()).max(8).optional(),
 });
 
 const putSchema = z.object({ beats: z.array(beatSchema).max(200) });
@@ -58,6 +59,7 @@ export async function PUT(request: Request, ctx: RouteContext<"/api/boards/[boar
         use_subject_lock: b.use_subject_lock,
         pose_media_id: b.pose_media_id ?? null,
         setting_media_id: b.setting_media_id ?? null,
+        extra_media_ids: b.extra_media_ids ?? [],
       };
     });
 

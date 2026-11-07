@@ -151,6 +151,8 @@ export type Beat = {
   use_subject_lock: boolean;
   pose_media_id: string | null;
   setting_media_id: string | null;
+  /** Extra reference images after the fixed slots, in order. */
+  extra_media_ids: string[];
   generation_id: string | null;
   generation_ids: string[];
   created_at: string;

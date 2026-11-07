@@ -34,6 +34,7 @@ function toPayload(beats: Beat[]) {
     use_subject_lock: b.use_subject_lock,
     pose_media_id: b.pose_media_id,
     setting_media_id: b.setting_media_id,
+    extra_media_ids: b.extra_media_ids ?? [],
   }));
 }
 
@@ -53,6 +54,7 @@ function newBeat(boardId: string, from?: Partial<Beat>): Beat {
     use_subject_lock: true,
     pose_media_id: null,
     setting_media_id: null,
+    extra_media_ids: [],
     generation_id: null,
     generation_ids: [],
     created_at: new Date().toISOString(),
@@ -95,7 +97,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     try {
       const res = await api<{ beats: Beat[]; media: Record<string, Media> }>(`/api/boards/${initial.id}/beats`, { method: "PUT", json: { beats: toPayload(list) } });
       // The server assigns real ids to new beats; keep local edits made meanwhile by position.
-      setBeats((cur) => (cur.length === res.beats.length ? cur.map((b, i) => ({ ...res.beats[i], vo: b.vo, image_prompt: b.image_prompt, role: b.role, use_subject_lock: b.use_subject_lock, pose_media_id: b.pose_media_id, setting_media_id: b.setting_media_id })) : res.beats));
+      setBeats((cur) => (cur.length === res.beats.length ? cur.map((b, i) => ({ ...res.beats[i], vo: b.vo, image_prompt: b.image_prompt, role: b.role, use_subject_lock: b.use_subject_lock, pose_media_id: b.pose_media_id, setting_media_id: b.setting_media_id, extra_media_ids: b.extra_media_ids })) : res.beats));
       setMedia((m) => ({ ...m, ...res.media }));
       setSaveState("saved");
     } catch (e) {
