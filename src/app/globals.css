@@ -51,6 +51,11 @@
   --radius-card: 8px;
 
   --animate-shimmer: shimmer 1.8s ease-in-out infinite;
+  --animate-reprompt: reprompt 1.2s ease-in-out infinite;
+  @keyframes reprompt {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(300%); }
+  }
   @keyframes shimmer {
     0% { background-position: -400px 0; }
     100% { background-position: 400px 0; }

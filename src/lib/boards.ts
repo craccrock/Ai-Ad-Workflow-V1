@@ -185,3 +185,56 @@ export function beatReferences(beat: Beat, subject: Subject | null, media: Recor
   if (beat.setting_media_id && media[beat.setting_media_id]) refs.push({ url: media[beat.setting_media_id].url, slot: "setting" });
   return refs;
 }
+
+// ─── reprompt ────────────────────────────────────────────────────────────────
+
+/**
+ * Rewrites one beat's image prompt according to the editor's direction, keeping the subject lock,
+ * style locks and the beat's job in the script intact. Returns the new prompt (plain text).
+ */
+export async function repromptBeat(board: Board, subject: Subject | null, beat: Beat, direction: string, refs: { slot: string }[]): Promise<{ image_prompt: string; usage: { input: number; output: number } }> {
+  if (!process.env.ANTHROPIC_API_KEY) throw new HttpError(503, "ANTHROPIC_API_KEY is not set — add it to the environment to use reprompt");
+  if (!direction.trim()) throw new HttpError(400, "Give a direction first");
+
+  const settings = await getSettings();
+  const brain = (board.brain_output ?? {}) as BrainOutput;
+  const subjectLock = subject ? `${subject.name}: ${subject.base_prompt}`.trim() : brain.subject_lock || "(none)";
+  const styleLocks = brain.style_locks && Object.keys(brain.style_locks).length ? Object.entries(brain.style_locks).map(([k, v]) => `- ${k}: ${v}`).join("\n") : "(none)";
+  const slots = refs.length ? refs.map((r, i) => `image ${i + 1} = ${r.slot}`).join(", ") : "none attached";
+
+  const system = `You rewrite image-generation prompts for a UGC-style ad storyboard. The prompt you write is sent as-is to Nano Banana (Google image model) together with the reference images listed below, so write it as a single finished prompt: no headings, no options, no commentary, no quotes around it.
+
+Rules:
+- Apply the editor's direction exactly: add what they ask to add, remove what they ask to remove, change what they ask to change. Keep everything else that still fits.
+- Keep the SUBJECT LOCK and STYLE LOCKS unless the direction overrides them.
+- The image must still serve the voiceover line it sits under.
+- If reference images are attached, refer to them by number ("the woman in image 1", "the pose in image 2") when the prompt depends on them.
+- Default length: a dense paragraph (80–160 words). If the direction asks for longer or more detailed, go to 160–260 words with concrete lighting, lens, framing, wardrobe, texture and setting detail. If it asks for shorter, cut.
+- Photoreal unless the style locks say otherwise. 9:16 vertical.
+- Output only the prompt text.
+
+SUBJECT LOCK: ${subjectLock}
+STYLE LOCKS:
+${styleLocks}
+REFERENCE IMAGES ATTACHED: ${slots}`;
+
+  const user = `VOICEOVER FOR THIS BEAT: ${beat.vo || "(none)"}
+ROLE: ${beat.role === "aroll" ? "A-roll (talent on camera)" : "B-roll"}
+${beat.shot_type ? `SHOT TYPE: ${beat.shot_type}\n` : ""}CURRENT PROMPT:
+${beat.image_prompt.trim() || "(empty)"}
+
+EDITOR'S DIRECTION:
+${direction.trim()}
+
+Write the new prompt.`;
+
+  const client = new Anthropic();
+  const message = await client.messages.stream({ model: settings.board_brain_model, max_tokens: 2000, system, messages: [{ role: "user", content: user }] }).finalMessage();
+  if (message.stop_reason === "refusal") throw new HttpError(502, "The brain declined this direction");
+  const text = message.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("").trim().replace(/^["“]|["”]$/g, "");
+  if (!text) throw new HttpError(502, "The brain returned an empty prompt");
+
+  const admin = createAdminClient();
+  await admin.from("beats").update({ image_prompt: text }).eq("id", beat.id);
+  return { image_prompt: text, usage: { input: message.usage.input_tokens, output: message.usage.output_tokens } };
+}

@@ -1,7 +1,8 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Merge, Plus, RotateCw, Scissors, Sparkles, Trash2, TriangleAlert } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Merge, Plus, RotateCw, Scissors, Sparkles, Trash2, TriangleAlert, Wand2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/input";
@@ -129,6 +130,7 @@ export function BeatCard({
   onInsertAfter,
   onDelete,
   onGenerate,
+  onReprompt,
   onShowGeneration,
 }: {
   beat: Beat;
@@ -149,11 +151,38 @@ export function BeatCard({
   onInsertAfter: () => void;
   onDelete: () => void;
   onGenerate: () => void;
+  /** Ask the brain to rewrite the image prompt; resolves with the new prompt. */
+  onReprompt: (direction: string) => Promise<string>;
   /** Step through earlier takes; the editor fetches the generation and swaps it in. */
   onShowGeneration: (id: string) => void;
 }) {
   const [splitOpen, setSplitOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
+  const [repromptOpen, setRepromptOpen] = useState(false);
+  const [direction, setDirection] = useState("");
+  const [reprompting, setReprompting] = useState(false);
+  const directionRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (repromptOpen) directionRef.current?.focus();
+  }, [repromptOpen]);
+
+  async function submitReprompt() {
+    const d = direction.trim();
+    if (!d || reprompting) return;
+    setReprompting(true);
+    try {
+      await onReprompt(d);
+      setDirection("");
+      setRepromptOpen(false);
+      setPromptOpen(true);
+      toast.success("Reprompt ready!", { duration: 1500 });
+    } catch (e) {
+      toast.error("Reprompt failed", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setReprompting(false);
+    }
+  }
   const broll = beat.role === "broll";
   const plan = beat.reference_plan ?? {};
   const takes = beat.generation_ids;
@@ -218,18 +247,61 @@ export function BeatCard({
           <div>
             <div className="mb-1 flex items-baseline justify-between">
               <label className="block text-[10px] font-medium uppercase tracking-[0.08em] text-cream-2">Image prompt</label>
-              <button type="button" onClick={() => setPromptOpen((v) => !v)} className="text-[10px] text-muted hover:text-cream">
-                {promptOpen ? "Collapse" : "Expand"}
-              </button>
+              <div className="flex items-center gap-3">
+                <button type="button" disabled={!canEdit || reprompting} onClick={() => setRepromptOpen((v) => !v)} className="flex items-center gap-1 text-[10px] text-gold hover:text-cream disabled:opacity-50">
+                  <Wand2 className="size-3" /> Reprompt
+                </button>
+                <button type="button" onClick={() => setPromptOpen((v) => !v)} className="text-[10px] text-muted hover:text-cream">
+                  {promptOpen ? "Collapse" : "Expand"}
+                </button>
+              </div>
             </div>
             <Textarea
               value={beat.image_prompt}
               onChange={(e) => onPatch({ image_prompt: e.target.value })}
               rows={promptOpen ? 10 : 3}
               readOnly={!canEdit}
-              className="font-sans text-[12px] leading-relaxed"
               placeholder="Describe the starter image"
+              className={cn("font-sans text-[12px] leading-relaxed", reprompting && "opacity-60")}
             />
+            {reprompting ? (
+              <div className="mt-1 h-1 overflow-hidden rounded-full bg-navy-3">
+                <div className="h-full w-1/3 animate-reprompt rounded-full bg-gold" />
+              </div>
+            ) : null}
+            {repromptOpen ? (
+              <div className="mt-2 rounded-[6px] border border-gold/40 bg-navy-2 p-2">
+                <label className="mb-1 block text-[10px] font-medium uppercase tracking-[0.08em] text-cream-2">Direction for the rewrite</label>
+                <Textarea
+                  ref={directionRef}
+                  value={direction}
+                  onChange={(e) => setDirection(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void submitReprompt();
+                    }
+                    if (e.key === "Escape") setRepromptOpen(false);
+                  }}
+                  rows={3}
+                  disabled={reprompting}
+                  className="font-sans text-[12px]"
+                  placeholder="e.g. put her in a knit top in front of a full-height mirror in a bigger bathroom; remove the phone; make the prompt longer and more detailed"
+                />
+                <div className="mt-1.5 flex items-center justify-between">
+                  <span className="text-[10px] text-muted">Enter to send · Shift+Enter for a new line</span>
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" disabled={reprompting} onClick={() => setRepromptOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button variant="gold" size="sm" disabled={reprompting || !direction.trim()} onClick={() => void submitReprompt()}>
+                      {reprompting ? <Loader2 className="size-3.5 animate-spin" /> : <Wand2 className="size-3.5" />}
+                      {reprompting ? "Rewriting…" : "Reprompt"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
             {plan.mode === "edit" && plan.edit_note ? <p className="mt-1 text-[11px] text-cream-2">Edit note: {plan.edit_note}</p> : null}
           </div>
 

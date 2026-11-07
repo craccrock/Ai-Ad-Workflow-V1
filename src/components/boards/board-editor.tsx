@@ -288,6 +288,17 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
       setTimeout(check, POLL_MS);
     });
 
+  const reprompt = useCallback(
+    async (beatId: string, direction: string) => {
+      await flush();
+      const r = await api<{ image_prompt: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction } });
+      // Patch against the latest beats so edits made while waiting aren't lost.
+      update(beatsRef.current.map((b) => (b.id === beatId ? { ...b, image_prompt: r.image_prompt } : b)));
+      return r.image_prompt;
+    },
+    [flush, initial.id, update],
+  );
+
   async function generateAll(mode: "missing" | "all") {
     const list = await flush();
     const targets = list.filter((b) => b.role === "broll" && b.image_prompt.trim() && (mode === "all" || !(b.generation_id && gens[b.generation_id]?.status === "completed")));
@@ -448,6 +459,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 onInsertAfter={() => insertAfter(beat.id)}
                 onDelete={() => deleteBeat(beat.id)}
                 onGenerate={() => void generate(beat.id)}
+                onReprompt={(direction) => reprompt(beat.id, direction)}
                 onShowGeneration={(id) => void showGeneration(beat.id, id)}
               />
             ))}
