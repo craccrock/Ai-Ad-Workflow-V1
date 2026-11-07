@@ -20,6 +20,9 @@ const patchSchema = z.object({
   model: z.string().min(1).optional(),
   aspect_ratio: z.string().min(3).optional(),
   resolution: z.string().min(2).optional(),
+  video_model: z.string().min(1).optional(),
+  video_duration: z.number().int().min(1).max(60).optional(),
+  video_resolution: z.string().min(2).nullable().optional(),
 });
 
 /** PATCH /api/boards/:id — any of title, script, subject_id, model, aspect_ratio, resolution. */

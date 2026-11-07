@@ -1,5 +1,6 @@
 import "server-only";
 import { DEFAULT_BRAIN_PROMPT } from "@/config/board-brain-prompt";
+import { DEFAULT_VIDEO_PROMPT } from "@/config/board-video-prompt";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /** Tunables edited under Admin → Settings. Stored one row per key in `app_settings`. */
@@ -12,6 +13,10 @@ export type AppSettings = {
   board_concurrency: number;
   /** Image model new boards start with. */
   board_default_model: string;
+  /** System prompt for the video-prompt writer; {{SUBJECT_LOCK}}, {{STYLE_LOCKS}}, {{BEATS}} are filled in per run. */
+  board_video_prompt: string;
+  /** Video model new boards start with. */
+  board_default_video_model: string;
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -19,6 +24,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   board_brain_model: "claude-opus-5-5",
   board_concurrency: 1,
   board_default_model: "nano-banana-pro",
+  board_video_prompt: DEFAULT_VIDEO_PROMPT,
+  board_default_video_model: "kling-3-pro",
 };
 
 export async function getSettings(): Promise<AppSettings> {

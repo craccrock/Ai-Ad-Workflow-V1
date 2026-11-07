@@ -155,6 +155,12 @@ export type Beat = {
   extra_media_ids: string[];
   generation_id: string | null;
   generation_ids: string[];
+  /** Per-beat clip overrides; null = use the board's defaults. */
+  video_model: string | null;
+  video_duration: number | null;
+  video_resolution: string | null;
+  video_generation_id: string | null;
+  video_generation_ids: string[];
   created_at: string;
 };
 
@@ -167,6 +173,10 @@ export type Board = {
   model: string;
   aspect_ratio: string;
   resolution: string;
+  /** Defaults for the video phase. */
+  video_model: string;
+  video_duration: number;
+  video_resolution: string | null;
   brain_output: { subject_lock?: string; style_locks?: Record<string, string> } | null;
   created_at: string;
   updated_at: string;

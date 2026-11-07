@@ -1,21 +1,28 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Merge, Plus, RotateCw, Scissors, Sparkles, Trash2, TriangleAlert, Wand2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Clapperboard, Download, ExternalLink, Loader2, Merge, Plus, RotateCw, Scissors, Sparkles, Trash2, TriangleAlert, Wand2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/input";
+import { NativeSelect, Textarea } from "@/components/ui/input";
 import { Badge } from "@/components/ui/misc";
 import { Segmented } from "@/components/ui/segmented";
 import { ImageThumb } from "@/components/ui/thumb";
+import { getModel, models } from "@/config/models.config";
 import { api, downloadFile, type ApiGeneration, type ApiMedia } from "@/lib/client-api";
 import { describeFailure, describeInFlight } from "@/lib/job-status";
 import type { Beat, Media, Subject } from "@/lib/types";
 import { cn, formatUsd } from "@/lib/utils";
 import { RefSlot } from "./ref-slot";
 
-export type BeatPatch = Partial<Pick<Beat, "role" | "vo" | "image_prompt" | "use_subject_lock" | "pose_media_id" | "setting_media_id" | "extra_media_ids" | "negative_prompt" | "shot_type" | "style">>;
+export type BeatPatch = Partial<Pick<Beat, "role" | "vo" | "image_prompt" | "video_prompt" | "video_model" | "video_duration" | "video_resolution" | "use_subject_lock" | "pose_media_id" | "setting_media_id" | "extra_media_ids" | "negative_prompt" | "shot_type" | "style">>;
+
+/** The board's defaults for the video phase, shown as the fallback in each card. */
+export type VideoDefaults = { model: string; duration: number; resolution: string | null };
+
+/** Video models that can animate a still. */
+export const videoModels = models.filter((m) => m.category === "video" && m.inputTypes.includes("image-to-video"));
 
 const isInFlight = (g?: ApiGeneration | null) => g?.status === "queued" || g?.status === "processing";
 
@@ -28,7 +35,7 @@ function useNow(ms: number) {
   return now;
 }
 
-function Result({ gen, generating }: { gen: ApiGeneration | null; generating: boolean }) {
+function Result({ gen, generating, kind }: { gen: ApiGeneration | null; generating: boolean; kind: "image" | "video" }) {
   const now = useNow(1000);
   if (generating && !gen) {
     return (
@@ -41,8 +48,8 @@ function Result({ gen, generating }: { gen: ApiGeneration | null; generating: bo
   if (!gen) {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-center text-cream-2">
-        <Sparkles className="size-5 text-muted" />
-        <span className="text-xs">No starter image yet</span>
+        {kind === "video" ? <Clapperboard className="size-5 text-muted" /> : <Sparkles className="size-5 text-muted" />}
+        <span className="text-xs">{kind === "video" ? "No clip yet" : "No starter image yet"}</span>
       </div>
     );
   }
@@ -74,7 +81,67 @@ function Result({ gen, generating }: { gen: ApiGeneration | null; generating: bo
   if (!gen.result_url) {
     return <div className="flex h-full w-full items-center justify-center px-4 text-center text-[11px] text-cream-2">File removed after its retention window — press ↻ to make it again.</div>;
   }
+  if (kind === "video" || gen.media_type === "video") {
+    return <video src={gen.result_url} controls playsInline preload="metadata" className="h-full w-full bg-black object-contain" />;
+  }
   return <ImageThumb src={gen.result_url} alt={gen.prompt ?? ""} sizes="(max-width: 640px) 100vw, 360px" className="object-contain" />;
+}
+
+/** The direction box under a prompt: Enter sends, Shift+Enter breaks a line, Esc closes. */
+function DirectionBox({ open, busy, placeholder, onClose, onSubmit }: { open: boolean; busy: boolean; placeholder: string; onClose: () => void; onSubmit: (direction: string) => Promise<void> }) {
+  const [direction, setDirection] = useState("");
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (open) ref.current?.focus();
+  }, [open]);
+  if (!open) return null;
+  const send = async () => {
+    const d = direction.trim();
+    if (!d || busy) return;
+    await onSubmit(d);
+    setDirection("");
+  };
+  return (
+    <div className="mt-2 rounded-[6px] border border-gold/40 bg-navy-2 p-2">
+      <label className="mb-1 block text-[10px] font-medium uppercase tracking-[0.08em] text-cream-2">Direction for the rewrite</label>
+      <Textarea
+        ref={ref}
+        value={direction}
+        onChange={(e) => setDirection(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            void send();
+          }
+          if (e.key === "Escape") onClose();
+        }}
+        rows={3}
+        disabled={busy}
+        className="font-sans text-[12px]"
+        placeholder={placeholder}
+      />
+      <div className="mt-1.5 flex items-center justify-between">
+        <span className="text-[10px] text-muted">Enter to send · Shift+Enter for a new line</span>
+        <div className="flex gap-2">
+          <Button variant="ghost" size="sm" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="gold" size="sm" disabled={busy || !direction.trim()} onClick={() => void send()}>
+            {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Wand2 className="size-3.5" />}
+            {busy ? "Rewriting…" : "Reprompt"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoadingBar() {
+  return (
+    <div className="mt-1 h-1 overflow-hidden rounded-full bg-navy-3">
+      <div className="h-full w-1/3 animate-reprompt rounded-full bg-gold" />
+    </div>
+  );
 }
 
 /** Splits VO text into lines in a dialog; every non-empty line becomes its own beat. */
@@ -91,24 +158,42 @@ function SplitDialogBody({ vo, onSplit, onOpenChange }: { vo: string; onSplit: (
   const parts = text.split(/\n+/).map((s) => s.trim()).filter(Boolean);
   return (
     <DialogContent title="Split this beat" description="Put each visual on its own line. Each line becomes a beat with the same references; the first keeps this beat's prompt and image.">
-        <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={6} className="font-sans" />
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <span className="text-xs text-cream-2">
-            {parts.length} beat{parts.length === 1 ? "" : "s"}
-          </span>
-          <Button
-            variant="gold"
-            size="sm"
-            disabled={parts.length < 2}
-            onClick={() => {
-              onSplit(parts);
-              onOpenChange(false);
-            }}
-          >
-            <Scissors /> Split into {parts.length}
-          </Button>
-        </div>
-      </DialogContent>
+      <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={6} className="font-sans" />
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <span className="text-xs text-cream-2">
+          {parts.length} beat{parts.length === 1 ? "" : "s"}
+        </span>
+        <Button
+          variant="gold"
+          size="sm"
+          disabled={parts.length < 2}
+          onClick={() => {
+            onSplit(parts);
+            onOpenChange(false);
+          }}
+        >
+          <Scissors /> Split into {parts.length}
+        </Button>
+      </div>
+    </DialogContent>
+  );
+}
+
+function TakeNav({ takes, current, onShow, label }: { takes: string[]; current: string | null; onShow: (id: string) => void; label: string }) {
+  if (takes.length < 2) return null;
+  const i = current ? takes.indexOf(current) : -1;
+  return (
+    <div className="flex items-center justify-between text-[11px] text-cream-2">
+      <button type="button" disabled={i <= 0} onClick={() => onShow(takes[i - 1])} className="rounded p-1 hover:text-cream disabled:opacity-30" aria-label={`Previous ${label}`}>
+        <ChevronLeft className="size-4" />
+      </button>
+      <span className="font-mono">
+        {label} {i + 1}/{takes.length}
+      </span>
+      <button type="button" disabled={i < 0 || i >= takes.length - 1} onClick={() => onShow(takes[i + 1])} className="rounded p-1 hover:text-cream disabled:opacity-30" aria-label={`Next ${label}`}>
+        <ChevronRight className="size-4" />
+      </button>
+    </div>
   );
 }
 
@@ -120,6 +205,9 @@ export function BeatCard({
   media,
   generation,
   generating,
+  videoGeneration,
+  animating,
+  videoDefaults,
   userId,
   canEdit,
   onPatch,
@@ -132,6 +220,9 @@ export function BeatCard({
   onGenerate,
   onReprompt,
   onShowGeneration,
+  onAnimate,
+  onRepromptVideo,
+  onShowVideoGeneration,
 }: {
   beat: Beat;
   index: number;
@@ -140,6 +231,9 @@ export function BeatCard({
   media: Record<string, Media>;
   generation: ApiGeneration | null;
   generating: boolean;
+  videoGeneration: ApiGeneration | null;
+  animating: boolean;
+  videoDefaults: VideoDefaults;
   userId: string;
   canEdit: boolean;
   onPatch: (patch: BeatPatch) => void;
@@ -155,27 +249,24 @@ export function BeatCard({
   onReprompt: (direction: string) => Promise<string>;
   /** Step through earlier takes; the editor fetches the generation and swaps it in. */
   onShowGeneration: (id: string) => void;
+  onAnimate: () => void;
+  onRepromptVideo: (direction: string) => Promise<string>;
+  onShowVideoGeneration: (id: string) => void;
 }) {
   const [splitOpen, setSplitOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
   const [repromptOpen, setRepromptOpen] = useState(false);
+  const [reprompting, setReprompting] = useState(false);
+  const [videoPromptOpen, setVideoPromptOpen] = useState(false);
+  const [videoRepromptOpen, setVideoRepromptOpen] = useState(false);
+  const [videoReprompting, setVideoReprompting] = useState(false);
   /** Empty extra slots opened with "Add reference" that have no image yet. */
   const [pendingExtras, setPendingExtras] = useState(0);
-  const [direction, setDirection] = useState("");
-  const [reprompting, setReprompting] = useState(false);
-  const directionRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
-    if (repromptOpen) directionRef.current?.focus();
-  }, [repromptOpen]);
-
-  async function submitReprompt() {
-    const d = direction.trim();
-    if (!d || reprompting) return;
+  async function submitReprompt(direction: string) {
     setReprompting(true);
     try {
-      await onReprompt(d);
-      setDirection("");
+      await onReprompt(direction);
       setRepromptOpen(false);
       setPromptOpen(true);
       toast.success("Reprompt ready!", { duration: 1500 });
@@ -185,12 +276,36 @@ export function BeatCard({
       setReprompting(false);
     }
   }
+  async function submitVideoReprompt(direction: string) {
+    setVideoReprompting(true);
+    try {
+      await onRepromptVideo(direction);
+      setVideoRepromptOpen(false);
+      setVideoPromptOpen(true);
+      toast.success("Video prompt ready!", { duration: 1500 });
+    } catch (e) {
+      toast.error("Reprompt failed", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setVideoReprompting(false);
+    }
+  }
+
   const broll = beat.role === "broll";
   const plan = beat.reference_plan ?? {};
   const takes = beat.generation_ids;
-  const takeIndex = generation ? takes.indexOf(generation.id) : -1;
+  const videoTakes = beat.video_generation_ids ?? [];
   const busy = generating || isInFlight(generation);
+  const videoBusy = animating || isInFlight(videoGeneration);
   const subjectImage = subject?.media ?? null;
+  const stillReady = generation?.status === "completed" && Boolean(generation.result_url);
+
+  // Effective video settings for this card (its overrides, else the board's defaults), clamped to the model.
+  const videoModelId = beat.video_model ?? videoDefaults.model;
+  const videoModel = getModel(videoModelId) ?? videoModels[0];
+  const durations = videoModel?.options.durations ?? [];
+  const resolutions = videoModel?.options.resolutions ?? null;
+  const videoDuration = beat.video_duration ?? videoDefaults.duration;
+  const videoResolution = beat.video_resolution ?? videoDefaults.resolution;
 
   const pick = (key: "pose_media_id" | "setting_media_id") => (m: ApiMedia | null) => {
     if (m) onMedia(m);
@@ -265,6 +380,7 @@ export function BeatCard({
             <label className="mb-1 block text-[10px] font-medium uppercase tracking-[0.08em] text-cream-2">Voiceover</label>
             <Textarea value={beat.vo} onChange={(e) => onPatch({ vo: e.target.value })} rows={2} readOnly={!canEdit} className="font-sans text-[13px]" placeholder="What is said over this shot" />
           </div>
+
           <div>
             <div className="mb-1 flex items-baseline justify-between">
               <label className="block text-[10px] font-medium uppercase tracking-[0.08em] text-cream-2">Image prompt</label>
@@ -285,44 +401,14 @@ export function BeatCard({
               placeholder="Describe the starter image"
               className={cn("font-sans text-[12px] leading-relaxed", reprompting && "opacity-60")}
             />
-            {reprompting ? (
-              <div className="mt-1 h-1 overflow-hidden rounded-full bg-navy-3">
-                <div className="h-full w-1/3 animate-reprompt rounded-full bg-gold" />
-              </div>
-            ) : null}
-            {repromptOpen ? (
-              <div className="mt-2 rounded-[6px] border border-gold/40 bg-navy-2 p-2">
-                <label className="mb-1 block text-[10px] font-medium uppercase tracking-[0.08em] text-cream-2">Direction for the rewrite</label>
-                <Textarea
-                  ref={directionRef}
-                  value={direction}
-                  onChange={(e) => setDirection(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void submitReprompt();
-                    }
-                    if (e.key === "Escape") setRepromptOpen(false);
-                  }}
-                  rows={3}
-                  disabled={reprompting}
-                  className="font-sans text-[12px]"
-                  placeholder="e.g. put her in a knit top in front of a full-height mirror in a bigger bathroom; remove the phone; make the prompt longer and more detailed"
-                />
-                <div className="mt-1.5 flex items-center justify-between">
-                  <span className="text-[10px] text-muted">Enter to send · Shift+Enter for a new line</span>
-                  <div className="flex gap-2">
-                    <Button variant="ghost" size="sm" disabled={reprompting} onClick={() => setRepromptOpen(false)}>
-                      Cancel
-                    </Button>
-                    <Button variant="gold" size="sm" disabled={reprompting || !direction.trim()} onClick={() => void submitReprompt()}>
-                      {reprompting ? <Loader2 className="size-3.5 animate-spin" /> : <Wand2 className="size-3.5" />}
-                      {reprompting ? "Rewriting…" : "Reprompt"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
+            {reprompting ? <LoadingBar /> : null}
+            <DirectionBox
+              open={repromptOpen}
+              busy={reprompting}
+              placeholder="e.g. put her in a knit top in front of a full-height mirror in a bigger bathroom; remove the phone; make the prompt longer and more detailed"
+              onClose={() => setRepromptOpen(false)}
+              onSubmit={submitReprompt}
+            />
             {plan.mode === "edit" && plan.edit_note ? <p className="mt-1 text-[11px] text-cream-2">Edit note: {plan.edit_note}</p> : null}
           </div>
 
@@ -365,30 +451,78 @@ export function BeatCard({
           ) : (
             <p className="text-[11px] text-muted">A-roll: covered by the talking head, no starter image needed. Switch to B-roll to generate one.</p>
           )}
+
+          {broll ? (
+            <div className="border-t border-hairline pt-3">
+              <div className="mb-1 flex items-baseline justify-between">
+                <label className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-cream-2">
+                  <Clapperboard className="size-3" /> Video prompt
+                </label>
+                <div className="flex items-center gap-3">
+                  <button type="button" disabled={!canEdit || videoReprompting} onClick={() => setVideoRepromptOpen((v) => !v)} className="flex items-center gap-1 text-[10px] text-gold hover:text-cream disabled:opacity-50">
+                    <Wand2 className="size-3" /> {beat.video_prompt?.trim() ? "Reprompt" : "Write with Claude"}
+                  </button>
+                  <button type="button" onClick={() => setVideoPromptOpen((v) => !v)} className="text-[10px] text-muted hover:text-cream">
+                    {videoPromptOpen ? "Collapse" : "Expand"}
+                  </button>
+                </div>
+              </div>
+              <Textarea
+                value={beat.video_prompt ?? ""}
+                onChange={(e) => onPatch({ video_prompt: e.target.value })}
+                rows={videoPromptOpen ? 10 : 3}
+                readOnly={!canEdit}
+                placeholder="How the starter image should move. Press “Write with Claude” to draft it from the VO and image prompt."
+                className={cn("font-sans text-[12px] leading-relaxed", videoReprompting && "opacity-60")}
+              />
+              {videoReprompting ? <LoadingBar /> : null}
+              <DirectionBox
+                open={videoRepromptOpen}
+                busy={videoReprompting}
+                placeholder={beat.video_prompt?.trim() ? "e.g. slower, she looks over her shoulder at the end; no camera movement; make it longer and more detailed" : "Optional direction, or just press Reprompt to draft it from the VO and image prompt"}
+                onClose={() => setVideoRepromptOpen(false)}
+                onSubmit={submitVideoReprompt}
+              />
+
+              <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                <div>
+                  <label className="mb-1 block text-[10px] uppercase tracking-[0.08em] text-muted">Model</label>
+                  <NativeSelect value={beat.video_model ?? ""} disabled={!canEdit} onChange={(e) => onPatch({ video_model: e.target.value || null, video_duration: null, video_resolution: null })} className="text-[12px]">
+                    <option value="">Board default · {(getModel(videoDefaults.model)?.tier ? `${getModel(videoDefaults.model)!.name} ${getModel(videoDefaults.model)!.tier}` : getModel(videoDefaults.model)?.name) ?? videoDefaults.model}</option>
+                    {videoModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.tier ? `${m.name} ${m.tier}` : m.name}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </div>
+                {durations.length ? (
+                  <div>
+                    <label className="mb-1 block text-[10px] uppercase tracking-[0.08em] text-muted">Length</label>
+                    <Segmented size="sm" value={durations.includes(videoDuration) ? String(videoDuration) : String(videoModel.options.defaultDuration ?? durations[0])} options={durations.map((d) => ({ value: String(d), label: `${d}s` }))} onChange={(v) => canEdit && onPatch({ video_duration: Number(v) })} />
+                  </div>
+                ) : null}
+                {resolutions ? (
+                  <div>
+                    <label className="mb-1 block text-[10px] uppercase tracking-[0.08em] text-muted">Quality</label>
+                    <Segmented size="sm" value={videoResolution && resolutions.includes(videoResolution) ? videoResolution : (videoModel.options.defaultResolution ?? resolutions[0])} options={resolutions.map((r) => ({ value: r }))} onChange={(v) => canEdit && onPatch({ video_resolution: v })} />
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-2">
           <div className="relative aspect-[9/16] overflow-hidden rounded-[6px] bg-[#18223d]">
-            <Result gen={generation} generating={generating} />
+            <Result gen={generation} generating={generating} kind="image" />
             {generation?.result_url && generation.status === "completed" ? (
               <a href={generation.result_url} target="_blank" rel="noopener" className="absolute right-1.5 top-1.5 rounded-full bg-navy/80 p-1.5 text-cream-2 hover:text-cream" title="Open full size">
                 <ExternalLink className="size-3.5" />
               </a>
             ) : null}
           </div>
-          {takes.length > 1 ? (
-            <div className="flex items-center justify-between text-[11px] text-cream-2">
-              <button type="button" disabled={takeIndex <= 0} onClick={() => onShowGeneration(takes[takeIndex - 1])} className="rounded p-1 hover:text-cream disabled:opacity-30" aria-label="Previous take">
-                <ChevronLeft className="size-4" />
-              </button>
-              <span className="font-mono">
-                take {takeIndex + 1}/{takes.length}
-              </span>
-              <button type="button" disabled={takeIndex < 0 || takeIndex >= takes.length - 1} onClick={() => onShowGeneration(takes[takeIndex + 1])} className="rounded p-1 hover:text-cream disabled:opacity-30" aria-label="Next take">
-                <ChevronRight className="size-4" />
-              </button>
-            </div>
-          ) : null}
+          <TakeNav takes={takes} current={generation?.id ?? null} onShow={onShowGeneration} label="take" />
           {broll ? (
             <Button variant={generation?.status === "completed" ? "outline" : "gold"} size="sm" disabled={!canEdit || busy || !beat.image_prompt.trim()} onClick={onGenerate}>
               {busy ? <Loader2 className="animate-spin" /> : generation ? <RotateCw /> : <Sparkles />}
@@ -401,6 +535,39 @@ export function BeatCard({
             </Button>
           ) : null}
           {generation?.cost_usd != null ? <span className="text-center font-mono text-[10px] text-muted">{formatUsd(generation.cost_usd)}</span> : null}
+
+          {broll ? (
+            <>
+              <div className="mt-2 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-cream-2">
+                <Clapperboard className="size-3" /> Clip
+              </div>
+              <div className="relative aspect-[9/16] overflow-hidden rounded-[6px] bg-[#18223d]">
+                <Result gen={videoGeneration} generating={animating} kind="video" />
+                {videoGeneration?.result_url && videoGeneration.status === "completed" ? (
+                  <a href={videoGeneration.result_url} target="_blank" rel="noopener" className="absolute right-1.5 top-1.5 rounded-full bg-navy/80 p-1.5 text-cream-2 hover:text-cream" title="Open full size">
+                    <ExternalLink className="size-3.5" />
+                  </a>
+                ) : null}
+              </div>
+              <TakeNav takes={videoTakes} current={videoGeneration?.id ?? null} onShow={onShowVideoGeneration} label="clip" />
+              <Button
+                variant={videoGeneration?.status === "completed" ? "outline" : "gold"}
+                size="sm"
+                disabled={!canEdit || videoBusy || !stillReady || !beat.video_prompt?.trim()}
+                title={!stillReady ? "Generate a starter image first" : !beat.video_prompt?.trim() ? "Write a video prompt first" : undefined}
+                onClick={onAnimate}
+              >
+                {videoBusy ? <Loader2 className="animate-spin" /> : videoGeneration ? <RotateCw /> : <Clapperboard />}
+                {videoBusy ? "Animating…" : videoGeneration ? "Re-animate" : "Animate"}
+              </Button>
+              {videoGeneration?.status === "completed" && videoGeneration.result_url ? (
+                <Button variant="ghost" size="sm" onClick={() => downloadFile(videoGeneration.result_url!, `beat-${index + 1}.mp4`)}>
+                  <Download /> Download
+                </Button>
+              ) : null}
+              {videoGeneration?.cost_usd != null ? <span className="text-center font-mono text-[10px] text-muted">{formatUsd(videoGeneration.cost_usd)}</span> : null}
+            </>
+          ) : null}
         </div>
       </div>
 

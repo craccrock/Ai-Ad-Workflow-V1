@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Loader2, Play, Sparkles, Square, Wand2 } from "lucide-react";
+import { Check, Clapperboard, Loader2, Play, RotateCw, Sparkles, Square, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -12,7 +12,7 @@ import { api, type ApiGeneration, type ApiMedia } from "@/lib/client-api";
 import { estimateCost } from "@/lib/generation-params";
 import type { Beat, BoardWithBeats, Media, Profile, Subject } from "@/lib/types";
 import { cn, formatUsd } from "@/lib/utils";
-import { BeatCard, fetchGeneration, type BeatPatch } from "./beat-card";
+import { BeatCard, fetchGeneration, videoModels, type BeatPatch } from "./beat-card";
 import { SubjectPicker } from "./subject-picker";
 
 const POLL_MS = 3000;
@@ -35,6 +35,9 @@ function toPayload(beats: Beat[]) {
     pose_media_id: b.pose_media_id,
     setting_media_id: b.setting_media_id,
     extra_media_ids: b.extra_media_ids ?? [],
+    video_model: b.video_model ?? null,
+    video_duration: b.video_duration ?? null,
+    video_resolution: b.video_resolution ?? null,
   }));
 }
 
@@ -57,6 +60,11 @@ function newBeat(boardId: string, from?: Partial<Beat>): Beat {
     extra_media_ids: [],
     generation_id: null,
     generation_ids: [],
+    video_model: null,
+    video_duration: null,
+    video_resolution: null,
+    video_generation_id: null,
+    video_generation_ids: [],
     created_at: new Date().toISOString(),
     ...from,
   };
@@ -72,6 +80,8 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   const [splitting, setSplitting] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "dirty" | "saving">("saved");
   const [generating, setGenerating] = useState<Set<string>>(new Set());
+  const [animating, setAnimating] = useState<Set<string>>(new Set());
+  const [writingVideo, setWritingVideo] = useState(false);
   const [runAll, setRunAll] = useState<{ total: number; done: number } | null>(null);
   const stopRef = useRef(false);
   const beatsRef = useRef(beats);
@@ -81,6 +91,17 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
 
   const model = getModel(board.model) ?? models[0];
   const imageModels = useMemo(() => models.filter((m) => m.mediaType === "image" && m.category === "image"), []);
+  const videoModel = getModel(board.video_model) ?? videoModels[0];
+  const perClip = useMemo(() => {
+    try {
+      const o = videoModel.options;
+      const duration = o.durations?.includes(board.video_duration) ? board.video_duration : (o.defaultDuration ?? o.durations?.[0]);
+      const resolution = o.resolutions ? (board.video_resolution && o.resolutions.includes(board.video_resolution) ? board.video_resolution : (o.defaultResolution ?? o.resolutions[0])) : undefined;
+      return estimateCost(videoModel, { prompt: "x", image_urls: [], reference_image_urls: [], reference_video_urls: [], reference_audio_urls: [], elements: [], settings: {}, duration, resolution, generate_audio: false }, 1).perGeneration;
+    } catch {
+      return null;
+    }
+  }, [videoModel, board.video_duration, board.video_resolution]);
   const perImage = useMemo(() => {
     try {
       return estimateCost(model, { prompt: "x", image_urls: [], reference_image_urls: [], reference_video_urls: [], reference_audio_urls: [], elements: [], settings: {}, aspect_ratio: board.aspect_ratio, resolution: board.resolution }, 1).perGeneration;
@@ -97,7 +118,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     try {
       const res = await api<{ beats: Beat[]; media: Record<string, Media> }>(`/api/boards/${initial.id}/beats`, { method: "PUT", json: { beats: toPayload(list) } });
       // The server assigns real ids to new beats; keep local edits made meanwhile by position.
-      setBeats((cur) => (cur.length === res.beats.length ? cur.map((b, i) => ({ ...res.beats[i], vo: b.vo, image_prompt: b.image_prompt, role: b.role, use_subject_lock: b.use_subject_lock, pose_media_id: b.pose_media_id, setting_media_id: b.setting_media_id, extra_media_ids: b.extra_media_ids })) : res.beats));
+      setBeats((cur) => (cur.length === res.beats.length ? cur.map((b, i) => ({ ...res.beats[i], vo: b.vo, image_prompt: b.image_prompt, role: b.role, use_subject_lock: b.use_subject_lock, pose_media_id: b.pose_media_id, setting_media_id: b.setting_media_id, extra_media_ids: b.extra_media_ids, video_prompt: b.video_prompt, video_model: b.video_model, video_duration: b.video_duration, video_resolution: b.video_resolution })) : res.beats));
       setMedia((m) => ({ ...m, ...res.media }));
       setSaveState("saved");
     } catch (e) {
@@ -134,7 +155,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     [scheduleSave],
   );
 
-  async function patchBoard(patch: Partial<Pick<BoardWithBeats, "title" | "script" | "subject_id" | "model" | "aspect_ratio" | "resolution">>) {
+  async function patchBoard(patch: Partial<Pick<BoardWithBeats, "title" | "script" | "subject_id" | "model" | "aspect_ratio" | "resolution" | "video_model" | "video_duration" | "video_resolution">>) {
     setBoard((b) => ({ ...b, ...patch }));
     try {
       await api(`/api/boards/${initial.id}`, { method: "PATCH", json: patch });
@@ -301,6 +322,86 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     [flush, initial.id, update],
   );
 
+  const repromptVideo = useCallback(
+    async (beatId: string, direction: string) => {
+      await flush();
+      const r = await api<{ video_prompt: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction, target: "video" } });
+      update(beatsRef.current.map((b) => (b.id === beatId ? { ...b, video_prompt: r.video_prompt } : b)));
+      return r.video_prompt;
+    },
+    [flush, initial.id, update],
+  );
+
+  /** Starts a clip for one beat; resolves once the job is submitted (not finished). */
+  const animate = useCallback(
+    async (beatId: string): Promise<string | null> => {
+      const list = await flush();
+      const beat = list.find((b) => b.id === beatId);
+      if (!beat || beat.id.startsWith("new-")) {
+        toast.error("Beat not saved yet — try again in a moment");
+        return null;
+      }
+      setAnimating((s) => new Set(s).add(beat.id));
+      try {
+        const res = await api<{ beat: Beat; generation: ApiGeneration }>(`/api/boards/${initial.id}/beats/${beat.id}/animate`, { method: "POST", json: {} });
+        setBeats((cur) => cur.map((b) => (b.id === beat.id ? { ...b, video_generation_id: res.beat.video_generation_id, video_generation_ids: res.beat.video_generation_ids } : b)));
+        setGens((g) => ({ ...g, [res.generation.id]: res.generation }));
+        return res.generation.id;
+      } catch (e) {
+        toast.error("Couldn't animate", { description: e instanceof Error ? e.message : String(e) });
+        return null;
+      } finally {
+        setAnimating((s) => {
+          const n = new Set(s);
+          n.delete(beat.id);
+          return n;
+        });
+      }
+    },
+    [flush, initial.id],
+  );
+
+  async function writeVideoPrompts(mode: "missing" | "all") {
+    const list = await flush();
+    const targets = list.filter((b) => b.role === "broll" && b.image_prompt.trim() && (mode === "all" || !b.video_prompt?.trim()));
+    if (!targets.length) return toast("Nothing to write", { description: mode === "missing" ? "Every B-roll beat already has a video prompt." : "No B-roll beats with an image prompt." });
+    if (mode === "all" && !window.confirm(`Rewrite the video prompts on all ${targets.length} B-roll beats? Edits you made by hand will be replaced.`)) return;
+    setWritingVideo(true);
+    try {
+      const res = await api<{ prompts: Record<string, string>; usage: { input: number; output: number } }>(`/api/boards/${initial.id}/video-prompts`, { method: "POST", json: { mode } });
+      setBeats((cur) => cur.map((b) => (res.prompts[b.id] ? { ...b, video_prompt: res.prompts[b.id] } : b)));
+      toast.success(`Video prompts ready for ${Object.keys(res.prompts).length} beat${Object.keys(res.prompts).length === 1 ? "" : "s"}`, { description: `${res.usage.output.toLocaleString()} tokens` });
+    } catch (e) {
+      toast.error("Couldn't write video prompts", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setWritingVideo(false);
+    }
+  }
+
+  async function animateAll(mode: "missing" | "all") {
+    const list = await flush();
+    const targets = list.filter((b) => b.role === "broll" && b.video_prompt?.trim() && b.generation_id && gens[b.generation_id]?.status === "completed" && (mode === "all" || !(b.video_generation_id && gens[b.video_generation_id]?.status === "completed")));
+    if (!targets.length) return toast("Nothing to animate", { description: mode === "missing" ? "Every B-roll beat with a starter image and a video prompt already has a clip." : "No B-roll beats have both a starter image and a video prompt." });
+    const cost = perClip != null ? perClip * targets.filter((b) => !b.video_model).length : null;
+    const overrides = targets.filter((b) => b.video_model).length;
+    if (!window.confirm(`Animate ${targets.length} clip${targets.length === 1 ? "" : "s"}${cost != null ? ` for about ${formatUsd(cost)}${overrides ? ` plus ${overrides} with their own model` : ""}` : ""}, ${concurrency} at a time?`)) return;
+    stopRef.current = false;
+    setRunAll({ total: targets.length, done: 0 });
+    const queue = [...targets];
+    await Promise.all(
+      Array.from({ length: Math.max(1, concurrency) }, async () => {
+        while (queue.length && !stopRef.current) {
+          const beat = queue.shift()!;
+          const id = await animate(beat.id);
+          if (id) await waitFor(id);
+          setRunAll((r) => (r ? { ...r, done: r.done + 1 } : r));
+        }
+      }),
+    );
+    setRunAll(null);
+    toast.success(stopRef.current ? "Stopped" : "Animate all finished");
+  }
+
   async function generateAll(mode: "missing" | "all") {
     const list = await flush();
     const targets = list.filter((b) => b.role === "broll" && b.image_prompt.trim() && (mode === "all" || !(b.generation_id && gens[b.generation_id]?.status === "completed")));
@@ -324,11 +425,11 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     toast.success(stopRef.current ? "Stopped" : "Generate all finished");
   }
 
-  async function showGeneration(beatId: string, genId: string) {
+  async function showGeneration(beatId: string, genId: string, kind: "image" | "video" = "image") {
     try {
       const g = gens[genId] ?? (await fetchGeneration(genId));
       setGens((cur) => ({ ...cur, [genId]: g }));
-      setBeats((cur) => cur.map((b) => (b.id === beatId ? { ...b, generation_id: genId } : b)));
+      setBeats((cur) => cur.map((b) => (b.id === beatId ? (kind === "video" ? { ...b, video_generation_id: genId } : { ...b, generation_id: genId }) : b)));
     } catch (e) {
       toast.error("Couldn't load that take", { description: e instanceof Error ? e.message : String(e) });
     }
@@ -336,6 +437,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
 
   const brollCount = beats.filter((b) => b.role === "broll").length;
   const doneCount = beats.filter((b) => b.role === "broll" && b.generation_id && gens[b.generation_id]?.status === "completed").length;
+  const clipCount = beats.filter((b) => b.role === "broll" && b.video_generation_id && gens[b.video_generation_id]?.status === "completed").length;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[340px_1fr]">
@@ -393,6 +495,36 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
           ) : null}
           {perImage != null ? <p className="text-[11px] text-muted">About {formatUsd(perImage)} per image · {concurrency} at a time</p> : null}
         </div>
+
+        <div className="space-y-3 border-t border-hairline pt-4">
+          <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-cream-2">
+            <Clapperboard className="size-3" /> Video defaults
+          </div>
+          <div>
+            <Label className="mb-1.5">Video model</Label>
+            <NativeSelect value={board.video_model} disabled={!canEdit} onChange={(e) => void patchBoard({ video_model: e.target.value, video_resolution: null })}>
+              {videoModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.tier ? `${m.name} ${m.tier}` : m.name}
+                </option>
+              ))}
+            </NativeSelect>
+            {videoModel.description ? <p className="mt-1 text-[11px] text-muted">{videoModel.description}</p> : null}
+          </div>
+          {videoModel.options.durations ? (
+            <div>
+              <Label className="mb-1.5">Length</Label>
+              <Segmented size="sm" value={videoModel.options.durations.includes(board.video_duration) ? String(board.video_duration) : String(videoModel.options.defaultDuration ?? videoModel.options.durations[0])} options={videoModel.options.durations.map((d) => ({ value: String(d), label: `${d}s` }))} onChange={(v) => canEdit && void patchBoard({ video_duration: Number(v) })} />
+            </div>
+          ) : null}
+          {videoModel.options.resolutions ? (
+            <div>
+              <Label className="mb-1.5">Quality</Label>
+              <Segmented size="sm" value={board.video_resolution && videoModel.options.resolutions.includes(board.video_resolution) ? board.video_resolution : (videoModel.options.defaultResolution ?? videoModel.options.resolutions[0])} options={videoModel.options.resolutions.map((v) => ({ value: v }))} onChange={(v) => canEdit && void patchBoard({ video_resolution: v })} />
+            </div>
+          ) : null}
+          {perClip != null ? <p className="text-[11px] text-muted">About {formatUsd(perClip)} per clip · each card can override these</p> : null}
+        </div>
       </aside>
 
       {/* ─── right: beats ─── */}
@@ -400,7 +532,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <h2 className="font-serif text-2xl text-cream">Beats</h2>
           <span className="text-xs text-cream-2">
-            {beats.length} total · {brollCount} B-roll · {doneCount} done
+            {beats.length} total · {brollCount} B-roll · {doneCount} images · {clipCount} clips
           </span>
           <span className={cn("flex items-center gap-1 text-[11px]", saveState === "saved" ? "text-muted" : "text-gold")}>
             {saveState === "saving" ? <Loader2 className="size-3 animate-spin" /> : saveState === "saved" ? <Check className="size-3" /> : null}
@@ -423,6 +555,16 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 </Button>
                 <Button variant="gold" size="sm" disabled={!canEdit || !brollCount} onClick={() => void generateAll("missing")}>
                   <Sparkles /> Generate missing
+                </Button>
+                <span className="mx-1 h-5 w-px bg-hairline" />
+                <Button variant="outline" size="sm" disabled={!canEdit || !brollCount || writingVideo} onClick={() => void writeVideoPrompts(beats.some((b) => b.role === "broll" && b.video_prompt?.trim()) ? "missing" : "all")} title="Have Claude write a video prompt for every B-roll beat that doesn't have one">
+                  {writingVideo ? <Loader2 className="animate-spin" /> : <Wand2 />} {writingVideo ? "Writing…" : "Write video prompts"}
+                </Button>
+                <Button variant="outline" size="sm" disabled={!canEdit || !doneCount} onClick={() => void animateAll("all")}>
+                  <RotateCw /> Re-animate all
+                </Button>
+                <Button variant="gold" size="sm" disabled={!canEdit || !doneCount} onClick={() => void animateAll("missing")}>
+                  <Clapperboard /> Animate missing
                 </Button>
               </>
             )}
@@ -451,6 +593,9 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 media={media}
                 generation={beat.generation_id ? (gens[beat.generation_id] ?? null) : null}
                 generating={generating.has(beat.id)}
+                videoGeneration={beat.video_generation_id ? (gens[beat.video_generation_id] ?? null) : null}
+                animating={animating.has(beat.id)}
+                videoDefaults={{ model: board.video_model, duration: board.video_duration, resolution: board.video_resolution }}
                 userId={profile.id}
                 canEdit={canEdit}
                 onPatch={(p) => patchBeat(beat.id, p)}
@@ -463,6 +608,9 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 onGenerate={() => void generate(beat.id)}
                 onReprompt={(direction) => reprompt(beat.id, direction)}
                 onShowGeneration={(id) => void showGeneration(beat.id, id)}
+                onAnimate={() => void animate(beat.id)}
+                onRepromptVideo={(direction) => repromptVideo(beat.id, direction)}
+                onShowVideoGeneration={(id) => void showGeneration(beat.id, id, "video")}
               />
             ))}
           </div>

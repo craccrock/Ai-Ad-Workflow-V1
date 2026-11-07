@@ -33,6 +33,7 @@ export async function loadBoardWithBeats(board: Board): Promise<BoardWithBeats> 
     if (b.setting_media_id) mediaIds.add(b.setting_media_id);
     for (const id of b.extra_media_ids ?? []) mediaIds.add(id);
     if (b.generation_id) genIds.add(b.generation_id);
+    if (b.video_generation_id) genIds.add(b.video_generation_id);
   }
   if (subject?.media_id) mediaIds.add(subject.media_id);
   const [{ data: media }, { data: gens }] = await Promise.all([
@@ -91,9 +92,9 @@ type BrainBeat = {
   video_prompt?: string;
   negative_prompt?: string;
 };
-type BrainOutput = { subject_lock?: string; style_locks?: Record<string, string>; beats?: BrainBeat[] };
+export type BrainOutput = { subject_lock?: string; style_locks?: Record<string, string>; beats?: BrainBeat[] };
 
-function parseBrainJson(text: string): BrainOutput {
+export function parseBrainJson(text: string): BrainOutput {
   const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = trimmed.indexOf("{");
   const end = trimmed.lastIndexOf("}");

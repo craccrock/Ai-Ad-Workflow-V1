@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { beatReferences, canEditBoard, getBoardForActor, loadBoardWithBeats, repromptBeat } from "@/lib/boards";
+import { writeVideoPrompts } from "@/lib/boards-video";
 
 export const maxDuration = 120;
 
-const bodySchema = z.object({ direction: z.string().trim().min(1).max(4000) });
+const bodySchema = z.object({ direction: z.string().trim().min(1).max(4000), target: z.enum(["image", "video"]).default("image") });
 
 /** POST /api/boards/:id/beats/:beatId/reprompt — asks the brain to rewrite the beat's image prompt per the editor's direction. */
 export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boardId]/beats/[beatId]/reprompt">) {
@@ -19,6 +20,12 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
     const full = await loadBoardWithBeats(board);
     const beat = full.beats.find((b) => b.id === beatId);
     if (!beat) throw new HttpError(404, "Beat not found");
+    if (parsed.data.target === "video") {
+      const { prompts, usage } = await writeVideoPrompts(board, full.subject, [beat], parsed.data.direction);
+      const video_prompt = prompts[beat.id];
+      if (!video_prompt) throw new HttpError(502, "The brain returned no video prompt");
+      return Response.json({ video_prompt, usage });
+    }
     const refs = beatReferences(beat, full.subject, full.media);
     return Response.json(await repromptBeat(board, full.subject, beat, parsed.data.direction, refs));
   });

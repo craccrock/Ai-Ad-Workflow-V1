@@ -14,11 +14,12 @@ const BRAIN_MODELS = [
   { value: "claude-haiku-5-5", label: "Claude Haiku 5.5 (cheapest)" },
 ];
 
-export function SettingsForm({ initial, defaultPrompt, anthropicConfigured }: { initial: AppSettings; defaultPrompt: string; anthropicConfigured: boolean }) {
+export function SettingsForm({ initial, defaultPrompt, defaultVideoPrompt, anthropicConfigured }: { initial: AppSettings; defaultPrompt: string; defaultVideoPrompt: string; anthropicConfigured: boolean }) {
   const [form, setForm] = useState(initial);
   const [saving, setSaving] = useState(false);
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
   const placeholders = ["{{SUBJECT_LOCK}}", "{{LIBRARY_INDEX}}", "{{SCRIPT}}"].filter((p) => !form.board_brain_prompt.includes(p));
+  const videoPlaceholders = ["{{SUBJECT_LOCK}}", "{{STYLE_LOCKS}}", "{{BEATS}}"].filter((p) => !form.board_video_prompt.includes(p));
 
   async function save() {
     setSaving(true);
@@ -42,7 +43,7 @@ export function SettingsForm({ initial, defaultPrompt, anthropicConfigured }: { 
         </p>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-4">
         <div>
           <Label className="mb-1.5">Brain model</Label>
           <NativeSelect value={form.board_brain_model} onChange={(e) => setForm({ ...form, board_brain_model: e.target.value })}>
@@ -70,6 +71,18 @@ export function SettingsForm({ initial, defaultPrompt, anthropicConfigured }: { 
               ))}
           </NativeSelect>
         </div>
+        <div>
+          <Label className="mb-1.5">Default video model</Label>
+          <NativeSelect value={form.board_default_video_model} onChange={(e) => setForm({ ...form, board_default_video_model: e.target.value })}>
+            {models
+              .filter((m) => m.category === "video" && m.inputTypes.includes("image-to-video"))
+              .map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.tier ? `${m.name} ${m.tier}` : m.name}
+                </option>
+              ))}
+          </NativeSelect>
+        </div>
       </div>
 
       <div>
@@ -88,8 +101,24 @@ export function SettingsForm({ initial, defaultPrompt, anthropicConfigured }: { 
         {placeholders.length ? <p className="mt-1 text-xs text-danger">Missing placeholder{placeholders.length > 1 ? "s" : ""}: {placeholders.join(", ")}</p> : null}
       </div>
 
+      <div>
+        <div className="mb-1.5 flex items-end justify-between gap-3">
+          <div>
+            <Label>Video prompt writer</Label>
+            <p className="mt-1 text-[11px] text-muted">
+              Writes the image-to-video prompt for each beat. Must contain <code className="font-mono">{"{{SUBJECT_LOCK}}"}</code>, <code className="font-mono">{"{{STYLE_LOCKS}}"}</code> and <code className="font-mono">{"{{BEATS}}"}</code>.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => setForm({ ...form, board_video_prompt: defaultVideoPrompt })}>
+            Reset to default
+          </Button>
+        </div>
+        <Textarea value={form.board_video_prompt} onChange={(e) => setForm({ ...form, board_video_prompt: e.target.value })} rows={20} className="font-mono text-[12px] leading-relaxed" spellCheck={false} />
+        {videoPlaceholders.length ? <p className="mt-1 text-xs text-danger">Missing placeholder{videoPlaceholders.length > 1 ? "s" : ""}: {videoPlaceholders.join(", ")}</p> : null}
+      </div>
+
       <div className="flex justify-end">
-        <Button variant="gold" disabled={!dirty || saving || placeholders.length > 0} onClick={save}>
+        <Button variant="gold" disabled={!dirty || saving || placeholders.length > 0 || videoPlaceholders.length > 0} onClick={save}>
           {saving ? "Saving…" : "Save settings"}
         </Button>
       </div>
