@@ -88,8 +88,9 @@ function Result({ gen, generating, kind }: { gen: ApiGeneration | null; generati
 }
 
 /** The direction box under a prompt: Enter sends, Shift+Enter breaks a line, Esc closes. */
-function DirectionBox({ open, busy, placeholder, onClose, onSubmit }: { open: boolean; busy: boolean; placeholder: string; onClose: () => void; onSubmit: (direction: string) => Promise<void> }) {
+function DirectionBox({ open, busy, placeholder, attachment, onClose, onSubmit }: { open: boolean; busy: boolean; placeholder: string; attachment?: { url: string; label: string } | null; onClose: () => void; onSubmit: (direction: string, attach: boolean) => Promise<void> }) {
   const [direction, setDirection] = useState("");
+  const [attach, setAttach] = useState(true);
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (open) ref.current?.focus();
@@ -98,7 +99,7 @@ function DirectionBox({ open, busy, placeholder, onClose, onSubmit }: { open: bo
   const send = async () => {
     const d = direction.trim();
     if (!d || busy) return;
-    await onSubmit(d);
+    await onSubmit(d, Boolean(attachment) && attach);
     setDirection("");
   };
   return (
@@ -120,6 +121,15 @@ function DirectionBox({ open, busy, placeholder, onClose, onSubmit }: { open: bo
         className="font-sans text-[12px]"
         placeholder={placeholder}
       />
+      {attachment ? (
+        <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-[6px] border border-hairline bg-field/60 p-1.5 text-[11px] text-cream-2">
+          <input type="checkbox" checked={attach} disabled={busy} onChange={(e) => setAttach(e.target.checked)} className="accent-gold" />
+          <span className="relative h-10 w-7 shrink-0 overflow-hidden rounded-[3px] bg-navy">
+            <ImageThumb src={attachment.url} alt="" sizes="40px" className="object-cover" />
+          </span>
+          <span>{attachment.label}</span>
+        </label>
+      ) : null}
       <div className="mt-1.5 flex items-center justify-between">
         <span className="text-[10px] text-muted">Enter to send · Shift+Enter for a new line</span>
         <div className="flex gap-2">
@@ -246,11 +256,11 @@ export function BeatCard({
   onDelete: () => void;
   onGenerate: () => void;
   /** Ask the brain to rewrite the image prompt; resolves with the new prompt. */
-  onReprompt: (direction: string) => Promise<string>;
+  onReprompt: (direction: string, attachResult: boolean) => Promise<{ prompt: string; diagnosis?: string }>;
   /** Step through earlier takes; the editor fetches the generation and swaps it in. */
   onShowGeneration: (id: string) => void;
   onAnimate: () => void;
-  onRepromptVideo: (direction: string) => Promise<string>;
+  onRepromptVideo: (direction: string, attachResult: boolean) => Promise<{ prompt: string; diagnosis?: string }>;
   onShowVideoGeneration: (id: string) => void;
 }) {
   const [splitOpen, setSplitOpen] = useState(false);
@@ -263,23 +273,23 @@ export function BeatCard({
   /** Empty extra slots opened with "Add reference" that have no image yet. */
   const [pendingExtras, setPendingExtras] = useState(0);
 
-  async function submitReprompt(direction: string) {
+  async function submitReprompt(direction: string, attach: boolean) {
     setReprompting(true);
     try {
-      await onReprompt(direction);
+      const r = await onReprompt(direction, attach);
       setRepromptOpen(false);
       setPromptOpen(true);
-      toast.success("Reprompt ready!", { duration: 1500 });
+      toast.success("Reprompt ready!", { duration: r.diagnosis ? 8000 : 1500, description: r.diagnosis ? `Claude saw: ${r.diagnosis}` : undefined });
     } catch (e) {
       toast.error("Reprompt failed", { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setReprompting(false);
     }
   }
-  async function submitVideoReprompt(direction: string) {
+  async function submitVideoReprompt(direction: string, attach: boolean) {
     setVideoReprompting(true);
     try {
-      await onRepromptVideo(direction);
+      await onRepromptVideo(direction, attach);
       setVideoRepromptOpen(false);
       setVideoPromptOpen(true);
       toast.success("Video prompt ready!", { duration: 1500 });
@@ -405,7 +415,8 @@ export function BeatCard({
             <DirectionBox
               open={repromptOpen}
               busy={reprompting}
-              placeholder="e.g. put her in a knit top in front of a full-height mirror in a bigger bathroom; remove the phone; make the prompt longer and more detailed"
+              placeholder="e.g. put her in a knit top in front of a full-height mirror in a bigger bathroom; remove the phone; make the prompt longer and more detailed — or: this gen has a fused hand and the wrong skin tone, fix the prompt so it can't happen again"
+              attachment={stillReady ? { url: generation!.result_url!, label: `Show Claude this result (take ${takes.indexOf(generation!.id) + 1}) so it can see what went wrong` } : null}
               onClose={() => setRepromptOpen(false)}
               onSubmit={submitReprompt}
             />
@@ -460,7 +471,7 @@ export function BeatCard({
                 </label>
                 <div className="flex items-center gap-3">
                   <button type="button" disabled={!canEdit || videoReprompting} onClick={() => setVideoRepromptOpen((v) => !v)} className="flex items-center gap-1 text-[10px] text-gold hover:text-cream disabled:opacity-50">
-                    <Wand2 className="size-3" /> {beat.video_prompt?.trim() ? "Reprompt" : "Write with Claude"}
+                    <Wand2 className="size-3" /> {(beat.video_prompt?.trim().length ?? 0) >= 200 ? "Reprompt" : "Write with Claude"}
                   </button>
                   <button type="button" onClick={() => setVideoPromptOpen((v) => !v)} className="text-[10px] text-muted hover:text-cream">
                     {videoPromptOpen ? "Collapse" : "Expand"}
@@ -479,7 +490,8 @@ export function BeatCard({
               <DirectionBox
                 open={videoRepromptOpen}
                 busy={videoReprompting}
-                placeholder={beat.video_prompt?.trim() ? "e.g. slower, she looks over her shoulder at the end; no camera movement; make it longer and more detailed" : "Optional direction, or just press Reprompt to draft it from the VO and image prompt"}
+                placeholder={(beat.video_prompt?.trim().length ?? 0) >= 200 ? "e.g. slower, she looks over her shoulder at the end; no camera movement; make it longer and more detailed" : "Optional direction, or just press Reprompt to draft it from the VO and image prompt"}
+                attachment={stillReady ? { url: generation!.result_url!, label: "Show Claude the starter image so the motion matches what's in frame" } : null}
                 onClose={() => setVideoRepromptOpen(false)}
                 onSubmit={submitVideoReprompt}
               />

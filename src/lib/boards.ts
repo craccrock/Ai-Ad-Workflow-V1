@@ -4,6 +4,7 @@ import { HttpError, type Actor } from "@/lib/auth";
 import { serializeGeneration } from "@/lib/generations";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSettings } from "@/lib/settings";
+import { imageBlockFromUrl } from "@/lib/vision";
 import type { Beat, BeatRole, Board, BoardWithBeats, Generation, Media, Subject } from "@/lib/types";
 
 // ─── access ──────────────────────────────────────────────────────────────────
@@ -198,7 +199,7 @@ export function beatReferences(beat: Beat, subject: Subject | null, media: Recor
  * Rewrites one beat's image prompt according to the editor's direction, keeping the subject lock,
  * style locks and the beat's job in the script intact. Returns the new prompt (plain text).
  */
-export async function repromptBeat(board: Board, subject: Subject | null, beat: Beat, direction: string, refs: { slot: string }[]): Promise<{ image_prompt: string; usage: { input: number; output: number } }> {
+export async function repromptBeat(board: Board, subject: Subject | null, beat: Beat, direction: string, refs: { slot: string }[], opts: { resultUrl?: string | null } = {}): Promise<{ image_prompt: string; diagnosis?: string; usage: { input: number; output: number } }> {
   if (!process.env.ANTHROPIC_API_KEY) throw new HttpError(503, "ANTHROPIC_API_KEY is not set — add it to the environment to use reprompt");
   if (!direction.trim()) throw new HttpError(400, "Give a direction first");
 
@@ -217,7 +218,8 @@ Rules:
 - If reference images are attached, refer to them by number ("the woman in image 1", "the pose in image 2") when the prompt depends on them.
 - Default length: a dense paragraph (80–160 words). If the direction asks for longer or more detailed, go to 160–260 words with concrete lighting, lens, framing, wardrobe, texture and setting detail. If it asks for shorter, cut.
 - Photoreal unless the style locks say otherwise. 9:16 vertical.
-- Output only the prompt text.
+- If an image is attached, it is what the CURRENT PROMPT actually produced. Study it first and list what went wrong against the intent and the direction (wrong person or skin tone, extra or fused fingers, warped anatomy, wrong framing, missing props or wardrobe, text, stylised or CGI look, wrong setting). Then write the new prompt so those faults cannot recur: state the correct version explicitly and positively (what the hands do, how many people, exact wardrobe, exact framing), and keep everything that was already right.
+- Output: if an image was attached, the first line is "DIAGNOSIS: <one or two plain sentences>", then a blank line, then the prompt. Otherwise output only the prompt text.
 
 SUBJECT LOCK: ${subjectLock}
 STYLE LOCKS:
@@ -234,13 +236,23 @@ ${direction.trim()}
 
 Write the new prompt.`;
 
+  const resultImage = opts.resultUrl ? await imageBlockFromUrl(opts.resultUrl) : null;
+  const content: Anthropic.ContentBlockParam[] = resultImage ? [{ type: "text", text: "This is the image the CURRENT PROMPT produced:" }, resultImage, { type: "text", text: user }] : [{ type: "text", text: user }];
+
   const client = new Anthropic();
-  const message = await client.messages.stream({ model: settings.board_brain_model, max_tokens: 2000, system, messages: [{ role: "user", content: user }] }).finalMessage();
+  const message = await client.messages.stream({ model: settings.board_brain_model, max_tokens: 2500, system, messages: [{ role: "user", content }] }).finalMessage();
   if (message.stop_reason === "refusal") throw new HttpError(502, "The brain declined this direction");
-  const text = message.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("").trim().replace(/^["“]|["”]$/g, "");
+  let text = message.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("").trim();
+  let diagnosis: string | undefined;
+  const m = text.match(/^DIAGNOSIS:\s*([\s\S]*?)\n\s*\n([\s\S]*)$/);
+  if (m) {
+    diagnosis = m[1].trim();
+    text = m[2].trim();
+  }
+  text = text.replace(/^["“]|["”]$/g, "").trim();
   if (!text) throw new HttpError(502, "The brain returned an empty prompt");
 
   const admin = createAdminClient();
   await admin.from("beats").update({ image_prompt: text }).eq("id", beat.id);
-  return { image_prompt: text, usage: { input: message.usage.input_tokens, output: message.usage.output_tokens } };
+  return { image_prompt: text, diagnosis, usage: { input: message.usage.input_tokens, output: message.usage.output_tokens } };
 }

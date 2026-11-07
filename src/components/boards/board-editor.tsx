@@ -312,22 +312,22 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     });
 
   const reprompt = useCallback(
-    async (beatId: string, direction: string) => {
+    async (beatId: string, direction: string, attachResult: boolean) => {
       await flush();
-      const r = await api<{ image_prompt: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction } });
+      const r = await api<{ image_prompt: string; diagnosis?: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction, attach_result: attachResult } });
       // Patch against the latest beats so edits made while waiting aren't lost.
       update(beatsRef.current.map((b) => (b.id === beatId ? { ...b, image_prompt: r.image_prompt } : b)));
-      return r.image_prompt;
+      return { prompt: r.image_prompt, diagnosis: r.diagnosis };
     },
     [flush, initial.id, update],
   );
 
   const repromptVideo = useCallback(
-    async (beatId: string, direction: string) => {
+    async (beatId: string, direction: string, attachResult: boolean) => {
       await flush();
-      const r = await api<{ video_prompt: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction, target: "video" } });
+      const r = await api<{ video_prompt: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction, target: "video", attach_result: attachResult } });
       update(beatsRef.current.map((b) => (b.id === beatId ? { ...b, video_prompt: r.video_prompt } : b)));
-      return r.video_prompt;
+      return { prompt: r.video_prompt };
     },
     [flush, initial.id, update],
   );
@@ -363,7 +363,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
 
   async function writeVideoPrompts(mode: "missing" | "all") {
     const list = await flush();
-    const targets = list.filter((b) => b.role === "broll" && b.image_prompt.trim() && (mode === "all" || !b.video_prompt?.trim()));
+    const targets = list.filter((b) => b.role === "broll" && b.image_prompt.trim() && (mode === "all" || (b.video_prompt?.trim().length ?? 0) < 200));
     if (!targets.length) return toast("Nothing to write", { description: mode === "missing" ? "Every B-roll beat already has a video prompt." : "No B-roll beats with an image prompt." });
     if (mode === "all" && !window.confirm(`Rewrite the video prompts on all ${targets.length} B-roll beats? Edits you made by hand will be replaced.`)) return;
     setWritingVideo(true);
@@ -557,7 +557,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                   <Sparkles /> Generate missing
                 </Button>
                 <span className="mx-1 h-5 w-px bg-hairline" />
-                <Button variant="outline" size="sm" disabled={!canEdit || !brollCount || writingVideo} onClick={() => void writeVideoPrompts(beats.some((b) => b.role === "broll" && b.video_prompt?.trim()) ? "missing" : "all")} title="Have Claude write a video prompt for every B-roll beat that doesn't have one">
+                <Button variant="outline" size="sm" disabled={!canEdit || !brollCount || writingVideo} onClick={() => void writeVideoPrompts("missing")} title="Have Claude write a full video prompt for every B-roll beat that only has the one-line hint (or none)">
                   {writingVideo ? <Loader2 className="animate-spin" /> : <Wand2 />} {writingVideo ? "Writing…" : "Write video prompts"}
                 </Button>
                 <Button variant="outline" size="sm" disabled={!canEdit || !doneCount} onClick={() => void animateAll("all")}>
@@ -606,10 +606,10 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 onInsertAfter={() => insertAfter(beat.id)}
                 onDelete={() => deleteBeat(beat.id)}
                 onGenerate={() => void generate(beat.id)}
-                onReprompt={(direction) => reprompt(beat.id, direction)}
+                onReprompt={(direction, attach) => reprompt(beat.id, direction, attach)}
                 onShowGeneration={(id) => void showGeneration(beat.id, id)}
                 onAnimate={() => void animate(beat.id)}
-                onRepromptVideo={(direction) => repromptVideo(beat.id, direction)}
+                onRepromptVideo={(direction, attach) => repromptVideo(beat.id, direction, attach)}
                 onShowVideoGeneration={(id) => void showGeneration(beat.id, id, "video")}
               />
             ))}
