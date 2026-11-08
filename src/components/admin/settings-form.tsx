@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input, Label, NativeSelect, Textarea } from "@/components/ui/input";
+import { AVATAR_MODEL_IDS } from "@/config/avatar";
 import { models } from "@/config/models.config";
 import { api } from "@/lib/client-api";
 import type { AppSettings } from "@/lib/settings";
@@ -14,12 +15,13 @@ const BRAIN_MODELS = [
   { value: "claude-haiku-5-5", label: "Claude Haiku 5.5 (cheapest)" },
 ];
 
-export function SettingsForm({ initial, defaultPrompt, defaultVideoPrompt, anthropicConfigured }: { initial: AppSettings; defaultPrompt: string; defaultVideoPrompt: string; anthropicConfigured: boolean }) {
+export function SettingsForm({ initial, defaultPrompt, defaultVideoPrompt, defaultAvatarPrompt, anthropicConfigured }: { initial: AppSettings; defaultPrompt: string; defaultVideoPrompt: string; defaultAvatarPrompt: string; anthropicConfigured: boolean }) {
   const [form, setForm] = useState(initial);
   const [saving, setSaving] = useState(false);
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
   const placeholders = ["{{SUBJECT_LOCK}}", "{{LIBRARY_INDEX}}", "{{SCRIPT}}"].filter((p) => !form.board_brain_prompt.includes(p));
   const videoPlaceholders = ["{{SUBJECT_LOCK}}", "{{STYLE_LOCKS}}", "{{BEATS}}"].filter((p) => !form.board_video_prompt.includes(p));
+  const avatarPlaceholders = ["{{SUBJECT_LOCK}}", "{{DURATIONS}}", "{{BEATS}}"].filter((p) => !form.board_avatar_prompt.includes(p));
 
   async function save() {
     setSaving(true);
@@ -83,6 +85,18 @@ export function SettingsForm({ initial, defaultPrompt, defaultVideoPrompt, anthr
               ))}
           </NativeSelect>
         </div>
+        <div>
+          <Label className="mb-1.5">Default avatar (talking-head) model</Label>
+          <NativeSelect value={form.board_default_avatar_model} onChange={(e) => setForm({ ...form, board_default_avatar_model: e.target.value })}>
+            {AVATAR_MODEL_IDS.map((id) => models.find((m) => m.id === id))
+              .filter((m): m is NonNullable<typeof m> => Boolean(m))
+              .map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.tier ? `${m.name} ${m.tier}` : m.name}
+                </option>
+              ))}
+          </NativeSelect>
+        </div>
       </div>
 
       <div>
@@ -117,8 +131,24 @@ export function SettingsForm({ initial, defaultPrompt, defaultVideoPrompt, anthr
         {videoPlaceholders.length ? <p className="mt-1 text-xs text-danger">Missing placeholder{videoPlaceholders.length > 1 ? "s" : ""}: {videoPlaceholders.join(", ")}</p> : null}
       </div>
 
+      <div>
+        <div className="mb-1.5 flex items-end justify-between gap-3">
+          <div>
+            <Label>Avatar prompt writer</Label>
+            <p className="mt-1 text-[11px] text-muted">
+              Writes the talking-head (A-roll) prompt for each chunk from the avatar still. Must contain <code className="font-mono">{"{{SUBJECT_LOCK}}"}</code>, <code className="font-mono">{"{{DURATIONS}}"}</code> and <code className="font-mono">{"{{BEATS}}"}</code>.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => setForm({ ...form, board_avatar_prompt: defaultAvatarPrompt })}>
+            Reset to default
+          </Button>
+        </div>
+        <Textarea value={form.board_avatar_prompt} onChange={(e) => setForm({ ...form, board_avatar_prompt: e.target.value })} rows={20} className="font-mono text-[12px] leading-relaxed" spellCheck={false} />
+        {avatarPlaceholders.length ? <p className="mt-1 text-xs text-danger">Missing placeholder{avatarPlaceholders.length > 1 ? "s" : ""}: {avatarPlaceholders.join(", ")}</p> : null}
+      </div>
+
       <div className="flex justify-end">
-        <Button variant="gold" disabled={!dirty || saving || placeholders.length > 0 || videoPlaceholders.length > 0} onClick={save}>
+        <Button variant="gold" disabled={!dirty || saving || placeholders.length > 0 || videoPlaceholders.length > 0 || avatarPlaceholders.length > 0} onClick={save}>
           {saving ? "Saving…" : "Save settings"}
         </Button>
       </div>

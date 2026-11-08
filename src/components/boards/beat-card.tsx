@@ -37,7 +37,7 @@ function useNow(ms: number) {
   return now;
 }
 
-function Result({ gen, generating, kind }: { gen: ApiGeneration | null; generating: boolean; kind: "image" | "video" }) {
+export function Result({ gen, generating, kind }: { gen: ApiGeneration | null; generating: boolean; kind: "image" | "video" }) {
   const now = useNow(1000);
   if (generating && !gen) {
     return (
@@ -109,7 +109,7 @@ function imageUrlFromText(text: string): string | null {
 }
 
 /** The direction box under a prompt: Enter sends, Shift+Enter breaks a line, Esc closes. Drop, paste, pick or upload example images for Claude to look at. */
-function DirectionBox({
+export function DirectionBox({
   open,
   busy,
   placeholder,
@@ -331,7 +331,7 @@ function SplitDialogBody({ vo, onSplit, onOpenChange }: { vo: string; onSplit: (
 }
 
 /** Prev/next through a beat's takes, plus a trash button that asks before deleting the one on screen for good. */
-function TakeNav({ takes, current, onShow, onDelete, label }: { takes: string[]; current: string | null; onShow: (id: string) => void; onDelete?: (id: string) => Promise<void>; label: string }) {
+export function TakeNav({ takes, current, onShow, onDelete, label }: { takes: string[]; current: string | null; onShow: (id: string) => void; onDelete?: (id: string) => Promise<void>; label: string }) {
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const i = current ? takes.indexOf(current) : -1;
@@ -648,7 +648,7 @@ export function BeatCard({
               <p className="mt-1 text-[10px] text-muted">Images are sent to the model in this order; refer to them in the prompt as &ldquo;image 1&rdquo;, &ldquo;image 2&rdquo;&hellip; counting only the filled slots.</p>
             </div>
           ) : (
-            <p className="text-[11px] text-muted">A-roll: covered by the talking head, no starter image needed. Switch to B-roll to generate one.</p>
+            <p className="text-[11px] text-muted">A-roll: the talking head says this line on camera. Its clip is made in the Avatar tab; switch to B-roll if it needs its own visual.</p>
           )}
 
           {broll ? (

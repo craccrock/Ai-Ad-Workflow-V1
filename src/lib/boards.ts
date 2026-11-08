@@ -37,6 +37,7 @@ export async function loadBoardWithBeats(board: Board): Promise<BoardWithBeats> 
     if (b.video_generation_id) genIds.add(b.video_generation_id);
   }
   if (subject?.media_id) mediaIds.add(subject.media_id);
+  if (board.avatar_media_id) mediaIds.add(board.avatar_media_id);
   const [{ data: media }, { data: gens }] = await Promise.all([
     mediaIds.size ? admin.from("media").select("*").in("id", [...mediaIds]) : Promise.resolve({ data: [] as Media[] }),
     genIds.size ? admin.from("generations").select("*").in("id", [...genIds]) : Promise.resolve({ data: [] }),

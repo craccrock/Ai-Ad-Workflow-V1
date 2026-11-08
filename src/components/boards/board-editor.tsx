@@ -1,19 +1,25 @@
 "use client";
 
-import { Check, Clapperboard, Loader2, Play, RotateCw, Sparkles, Square, Wand2 } from "lucide-react";
+import { Check, Clapperboard, Loader2, Play, RotateCw, Scissors, Sparkles, Square, UserRound, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input, Label, NativeSelect, Textarea } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
+import { AVATAR_MODEL_IDS, avatarDurationFor, DEFAULT_AVATAR_MODEL, wordCount } from "@/config/avatar";
 import { getModel, models } from "@/config/models.config";
 import { api, type ApiGeneration, type ApiMedia } from "@/lib/client-api";
 import { estimateCost } from "@/lib/generation-params";
 import type { Beat, BoardWithBeats, Media, Profile, Subject } from "@/lib/types";
 import { cn, formatUsd } from "@/lib/utils";
+import { AvatarCard, MIN_AVATAR_PROMPT_CHARS } from "./avatar-card";
 import { BeatCard, fetchGeneration, videoModels, type BeatPatch } from "./beat-card";
+import { RefSlot } from "./ref-slot";
 import { SubjectPicker } from "./subject-picker";
+
+/** Talking-head models, in the order the Avatar tab offers them. */
+const avatarModels = AVATAR_MODEL_IDS.map((id) => getModel(id)).filter((m): m is NonNullable<typeof m> => Boolean(m));
 
 const POLL_MS = 3000;
 const SAVE_DEBOUNCE_MS = 800;
@@ -82,6 +88,9 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   const [generating, setGenerating] = useState<Set<string>>(new Set());
   const [animating, setAnimating] = useState<Set<string>>(new Set());
   const [writingVideo, setWritingVideo] = useState(false);
+  const [tab, setTab] = useState<"board" | "avatar">("board");
+  const [chunking, setChunking] = useState(false);
+  const [writingAvatar, setWritingAvatar] = useState(false);
   const [runAll, setRunAll] = useState<{ total: number; done: number } | null>(null);
   const stopRef = useRef(false);
   const beatsRef = useRef(beats);
@@ -102,6 +111,25 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
       return null;
     }
   }, [videoModel, board.video_duration, board.video_resolution]);
+  // ─── avatar phase ─────────────────────────────────────────────────────────
+  const avatarModelId = board.avatar_model || DEFAULT_AVATAR_MODEL;
+  const avatarModel = getModel(avatarModelId) ?? avatarModels[0];
+  const avatarDurations = useMemo(() => avatarModel.options.durations ?? [4, 6, 8, 10], [avatarModel]);
+  const avatarResolution = avatarModel.options.resolutions ? (board.avatar_resolution && avatarModel.options.resolutions.includes(board.avatar_resolution) ? board.avatar_resolution : (avatarModel.options.defaultResolution ?? avatarModel.options.resolutions[0])) : undefined;
+  const avatarMedia: Media | null = (board.avatar_media_id ? media[board.avatar_media_id] : null) ?? subject?.media ?? null;
+  const avatarReady = Boolean(avatarMedia?.url);
+  const avatarClipCost = useCallback(
+    (duration: number) => {
+      try {
+        return estimateCost(avatarModel, { prompt: "x", image_urls: [], reference_image_urls: [], reference_video_urls: [], reference_audio_urls: [], elements: [], settings: {}, duration, resolution: avatarResolution, generate_audio: true }, 1).perGeneration;
+      } catch {
+        return null;
+      }
+    },
+    [avatarModel, avatarResolution],
+  );
+  const avatarDurationOf = useCallback((b: Beat) => (b.video_duration && avatarDurations.includes(b.video_duration) ? b.video_duration : avatarDurationFor(wordCount(b.vo), avatarDurations)), [avatarDurations]);
+
   const perImage = useMemo(() => {
     try {
       return estimateCost(model, { prompt: "x", image_urls: [], reference_image_urls: [], reference_video_urls: [], reference_audio_urls: [], elements: [], settings: {}, aspect_ratio: board.aspect_ratio, resolution: board.resolution }, 1).perGeneration;
@@ -155,7 +183,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     [scheduleSave],
   );
 
-  async function patchBoard(patch: Partial<Pick<BoardWithBeats, "title" | "script" | "subject_id" | "model" | "aspect_ratio" | "resolution" | "video_model" | "video_duration" | "video_resolution">>) {
+  async function patchBoard(patch: Partial<Pick<BoardWithBeats, "title" | "script" | "subject_id" | "model" | "aspect_ratio" | "resolution" | "video_model" | "video_duration" | "video_resolution" | "avatar_media_id" | "avatar_model" | "avatar_resolution">>) {
     setBoard((b) => ({ ...b, ...patch }));
     try {
       await api(`/api/boards/${initial.id}`, { method: "PATCH", json: patch });
@@ -435,6 +463,72 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     }
   }
 
+  // ─── avatar actions ───────────────────────────────────────────────────────
+
+  /** Re-cuts the A-roll narration into clip-sized beats (server-side, via Claude). Replaces the A-roll beats. */
+  async function chunkAroll() {
+    const list = await flush();
+    const aroll = list.filter((b) => b.role === "aroll" && b.vo.trim());
+    if (!aroll.length) return toast("Nothing to chunk", { description: "No A-roll beats with a line. Mark the talking-head lines as A-roll in the Storyboard tab first." });
+    const withClips = aroll.filter((b) => b.video_generation_ids?.length).length;
+    if (!window.confirm(`Re-cut the ${aroll.length} A-roll beat${aroll.length === 1 ? "" : "s"} into ${Math.max(...avatarDurations)}s-or-shorter chunks? Their avatar prompts are cleared${withClips ? ` and ${withClips} beat${withClips === 1 ? "" : "s"} lose their clips (the videos stay in the gallery)` : ""}. B-roll beats are untouched.`)) return;
+    setChunking(true);
+    try {
+      const res = await api<{ beats: Beat[]; usage: { input: number; output: number } }>(`/api/boards/${initial.id}/avatar/chunk`, { method: "POST", json: {} });
+      setBeats(res.beats);
+      setSaveState("saved");
+      const n = res.beats.filter((b) => b.role === "aroll").length;
+      toast.success(`A-roll cut into ${n} chunk${n === 1 ? "" : "s"}`, { description: "Next: write the avatar prompts." });
+    } catch (e) {
+      toast.error("Couldn't chunk the A-roll", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setChunking(false);
+    }
+  }
+
+  async function writeAvatarPrompts(mode: "missing" | "all") {
+    const list = await flush();
+    const targets = list.filter((b) => b.role === "aroll" && b.vo.trim() && (mode === "all" || (b.video_prompt?.trim().length ?? 0) < MIN_AVATAR_PROMPT_CHARS));
+    if (!targets.length) return toast("Nothing to write", { description: mode === "missing" ? "Every A-roll chunk already has an avatar prompt." : "No A-roll chunks with a line." });
+    if (!avatarReady) return toast.error("Add an avatar still first");
+    if (mode === "all" && !window.confirm(`Rewrite the avatar prompts on all ${targets.length} A-roll chunks? Edits you made by hand will be replaced.`)) return;
+    setWritingAvatar(true);
+    try {
+      const res = await api<{ prompts: Record<string, string>; usage: { input: number; output: number } }>(`/api/boards/${initial.id}/avatar/prompts`, { method: "POST", json: { mode } });
+      setBeats((cur) => cur.map((b) => (res.prompts[b.id] ? { ...b, video_prompt: res.prompts[b.id] } : b)));
+      toast.success(`Avatar prompts ready for ${Object.keys(res.prompts).length} chunk${Object.keys(res.prompts).length === 1 ? "" : "s"}`, { description: `${res.usage.output.toLocaleString()} tokens` });
+    } catch (e) {
+      toast.error("Couldn't write avatar prompts", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setWritingAvatar(false);
+    }
+  }
+
+  async function animateAvatarAll(mode: "missing" | "all") {
+    const list = await flush();
+    if (!avatarReady) return toast.error("Add an avatar still first");
+    const targets = list.filter((b) => b.role === "aroll" && (b.video_prompt?.trim().length ?? 0) >= MIN_AVATAR_PROMPT_CHARS && (mode === "all" || !(b.video_generation_id && gens[b.video_generation_id]?.status === "completed")));
+    if (!targets.length) return toast("Nothing to generate", { description: mode === "missing" ? "Every A-roll chunk with a prompt already has a clip." : "No A-roll chunks have an avatar prompt yet." });
+    const costs = targets.map((b) => avatarClipCost(avatarDurationOf(b)));
+    const cost = costs.every((c) => c != null) ? costs.reduce((s, c) => s + (c ?? 0), 0) : null;
+    if (!window.confirm(`Generate ${targets.length} talking-head clip${targets.length === 1 ? "" : "s"} with ${avatarModel.name}${cost != null ? ` for about ${formatUsd(cost)}` : ""}, ${concurrency} at a time?`)) return;
+    stopRef.current = false;
+    setRunAll({ total: targets.length, done: 0 });
+    const queue = [...targets];
+    await Promise.all(
+      Array.from({ length: Math.max(1, concurrency) }, async () => {
+        while (queue.length && !stopRef.current) {
+          const beat = queue.shift()!;
+          const id = await animate(beat.id);
+          if (id) await waitFor(id);
+          setRunAll((r) => (r ? { ...r, done: r.done + 1 } : r));
+        }
+      }),
+    );
+    setRunAll(null);
+    toast.success(stopRef.current ? "Stopped" : "Avatar clips finished");
+  }
+
   /** Deletes one take (image or clip) from a beat, for good. The server picks the neighbouring take as current. */
   async function deleteTake(beatId: string, genId: string) {
     const res = await api<{ kind: "image" | "video" } & Partial<Pick<Beat, "generation_id" | "generation_ids" | "video_generation_id" | "video_generation_ids">>>(`/api/boards/${initial.id}/beats/${beatId}/takes/${genId}`, { method: "DELETE" });
@@ -451,6 +545,13 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   const brollCount = beats.filter((b) => b.role === "broll").length;
   const doneCount = beats.filter((b) => b.role === "broll" && b.generation_id && gens[b.generation_id]?.status === "completed").length;
   const clipCount = beats.filter((b) => b.role === "broll" && b.video_generation_id && gens[b.video_generation_id]?.status === "completed").length;
+  const arollBeats = beats.map((b, i) => ({ beat: b, index: i })).filter(({ beat }) => beat.role === "aroll");
+  const avatarPromptCount = arollBeats.filter(({ beat }) => (beat.video_prompt?.trim().length ?? 0) >= MIN_AVATAR_PROMPT_CHARS).length;
+  const avatarClipCount = arollBeats.filter(({ beat }) => beat.video_generation_id && gens[beat.video_generation_id]?.status === "completed").length;
+  const avatarTotalCost = (() => {
+    const costs = arollBeats.map(({ beat }) => avatarClipCost(avatarDurationOf(beat)));
+    return costs.length && costs.every((c) => c != null) ? costs.reduce((s, c) => s + (c ?? 0), 0) : null;
+  })();
 
   return (
     <div className="grid gap-6 lg:grid-cols-[340px_1fr]">
@@ -542,14 +643,138 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
 
       {/* ─── right: beats ─── */}
       <section className="min-w-0">
+        <div className="mb-4 flex items-center gap-3 border-b border-hairline pb-3">
+          <Segmented<"board" | "avatar">
+            value={tab}
+            onChange={setTab}
+            aria-label="Phase"
+            options={[
+              { value: "board", label: `Storyboard · ${brollCount} B-roll` },
+              { value: "avatar", label: `Avatar · ${arollBeats.length} A-roll` },
+            ]}
+          />
+          <span className={cn("ml-auto flex items-center gap-1 text-[11px]", saveState === "saved" ? "text-muted" : "text-gold")}>
+            {saveState === "saving" ? <Loader2 className="size-3 animate-spin" /> : saveState === "saved" ? <Check className="size-3" /> : null}
+            {saveState === "saving" ? "Saving" : saveState === "saved" ? "Saved" : "Unsaved"}
+          </span>
+        </div>
+
+        {tab === "avatar" ? (
+          <div className="space-y-4">
+            <div className="grid gap-4 rounded-[8px] border border-hairline bg-surface p-3 md:grid-cols-[150px_1fr]">
+              <RefSlot
+                label="Avatar still"
+                hint={!board.avatar_media_id && subject?.media ? "using the subject's base image" : undefined}
+                media={avatarMedia}
+                userId={profile.id}
+                disabled={!canEdit}
+                onChange={(m) => {
+                  if (m) setMedia((cur) => ({ ...cur, [m.id]: m }));
+                  void patchBoard({ avatar_media_id: m?.id ?? null });
+                }}
+              />
+              <div className="space-y-3">
+                <p className="text-[12px] leading-snug text-cream-2">
+                  Every A-roll chunk is animated from this one still, speaking its line with generated voice. Keep the same still (same room, same framing) for the whole board so the clips cut together. A 9:16 phone-style frame with her already looking into the lens works best.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <Label className="mb-1.5">Avatar model</Label>
+                    <NativeSelect value={avatarModelId} disabled={!canEdit} onChange={(e) => void patchBoard({ avatar_model: e.target.value, avatar_resolution: null })}>
+                      {avatarModels.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.tier ? `${m.name} ${m.tier}` : m.name}
+                        </option>
+                      ))}
+                    </NativeSelect>
+                  </div>
+                  {avatarModel.options.resolutions ? (
+                    <div>
+                      <Label className="mb-1.5">Quality</Label>
+                      <Segmented size="sm" value={avatarResolution} options={avatarModel.options.resolutions.map((v) => ({ value: v }))} onChange={(v) => canEdit && void patchBoard({ avatar_resolution: v })} />
+                    </div>
+                  ) : null}
+                  <div>
+                    <Label className="mb-1.5">Clip lengths</Label>
+                    <p className="text-[12px] text-cream">{avatarDurations.map((d) => `${d}s`).join(" / ")}</p>
+                    <p className="text-[11px] text-muted">picked per line from its word count{avatarClipCost(avatarDurations[avatarDurations.length - 1]) != null ? ` · up to ${formatUsd(avatarClipCost(avatarDurations[avatarDurations.length - 1])!)} a clip` : ""}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs text-cream-2">
+                {arollBeats.length} chunks · {avatarPromptCount} prompts · {avatarClipCount} clips{avatarTotalCost != null && arollBeats.length ? ` · about ${formatUsd(avatarTotalCost)} for the full set` : ""}
+              </span>
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                {runAll ? (
+                  <>
+                    <span className="font-mono text-xs text-cream-2">
+                      {runAll.done}/{runAll.total}
+                    </span>
+                    <Button variant="danger" size="sm" onClick={() => (stopRef.current = true)}>
+                      <Square /> Stop
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button variant="outline" size="sm" disabled={!canEdit || chunking || !arollBeats.length} onClick={() => void chunkAroll()} title={`Have Claude re-cut the A-roll lines so each fits one ${Math.max(...avatarDurations)}s-or-shorter clip`}>
+                      {chunking ? <Loader2 className="animate-spin" /> : <Scissors />} {chunking ? "Chunking…" : "Chunk A-roll"}
+                    </Button>
+                    <Button variant="outline" size="sm" disabled={!canEdit || writingAvatar || !arollBeats.length || !avatarReady} onClick={() => void writeAvatarPrompts("missing")} title="Write a talking-head prompt for every chunk that has none yet">
+                      {writingAvatar ? <Loader2 className="animate-spin" /> : <Wand2 />} {writingAvatar ? "Writing…" : "Write avatar prompts"}
+                    </Button>
+                    <Button variant="ghost" size="sm" disabled={!canEdit || writingAvatar || !avatarPromptCount} onClick={() => void writeAvatarPrompts("all")} title="Rewrite every chunk's prompt">
+                      Rewrite all
+                    </Button>
+                    <span className="mx-1 h-5 w-px bg-hairline" />
+                    <Button variant="outline" size="sm" disabled={!canEdit || !avatarClipCount} onClick={() => void animateAvatarAll("all")}>
+                      <RotateCw /> Regenerate all
+                    </Button>
+                    <Button variant="gold" size="sm" disabled={!canEdit || !avatarPromptCount || !avatarReady} onClick={() => void animateAvatarAll("missing")}>
+                      <UserRound /> Generate missing clips
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {arollBeats.length === 0 ? (
+              <div className="rounded-[8px] border border-dashed border-hairline px-6 py-16 text-center">
+                <p className="font-serif text-xl text-cream">No A-roll yet</p>
+                <p className="mt-2 text-sm text-cream-2">Split the script first; the lines the talking head says on camera arrive here as A-roll. You can also flip any beat to A-roll in the Storyboard tab.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {arollBeats.map(({ beat, index }) => (
+                  <AvatarCard
+                    key={beat.id}
+                    beat={beat}
+                    index={index}
+                    model={avatarModel}
+                    generation={beat.video_generation_id ? (gens[beat.video_generation_id] ?? null) : null}
+                    animating={animating.has(beat.id)}
+                    avatarReady={avatarReady}
+                    userId={profile.id}
+                    canEdit={canEdit}
+                    onPatch={(p) => patchBeat(beat.id, p)}
+                    onAnimate={() => void animate(beat.id)}
+                    onReprompt={(direction, attach, examples, fresh) => repromptVideo(beat.id, direction, attach, examples, fresh)}
+                    onShowGeneration={(id) => void showGeneration(beat.id, id, "video")}
+                    onDeleteTake={(id) => deleteTake(beat.id, id)}
+                  />
+                ))}
+              </div>
+            )}
+            <p className="text-[11px] text-muted">Coming next: &ldquo;Cut together&rdquo; &mdash; Claude assembles the A-roll and B-roll clips into the finished ad with ffmpeg, so the edit stops being a manual step too.</p>
+          </div>
+        ) : (
+          <>
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <h2 className="font-serif text-2xl text-cream">Beats</h2>
           <span className="text-xs text-cream-2">
             {beats.length} total · {brollCount} B-roll · {doneCount} images · {clipCount} clips
-          </span>
-          <span className={cn("flex items-center gap-1 text-[11px]", saveState === "saved" ? "text-muted" : "text-gold")}>
-            {saveState === "saving" ? <Loader2 className="size-3 animate-spin" /> : saveState === "saved" ? <Check className="size-3" /> : null}
-            {saveState === "saving" ? "Saving" : saveState === "saved" ? "Saved" : "Unsaved"}
           </span>
           <div className="ml-auto flex items-center gap-2">
             {runAll ? (
@@ -628,6 +853,8 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
               />
             ))}
           </div>
+        )}
+          </>
         )}
       </section>
     </div>

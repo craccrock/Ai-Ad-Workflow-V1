@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { beatReferences, canEditBoard, getBoardForActor, loadBoardWithBeats, repromptBeat } from "@/lib/boards";
+import { avatarStillUrl, writeAvatarPrompts } from "@/lib/boards-avatar";
 import { writeVideoPrompts } from "@/lib/boards-video";
 
 export const maxDuration = 120;
@@ -31,6 +32,14 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
     if (!beat) throw new HttpError(404, "Beat not found");
     const still = beat.generation_id ? full.generations[beat.generation_id] : null;
     const stillUrl = still?.status === "completed" && still.result_url ? still.result_url : null;
+    if (parsed.data.target === "video" && beat.role === "aroll") {
+      const avatarUrl = avatarStillUrl(full);
+      if (!avatarUrl) throw new HttpError(422, "Add an avatar still in the Avatar tab (or give the subject a base image) first");
+      const { prompts, usage } = await writeAvatarPrompts(board, full.subject, full.beats, [beat], avatarUrl, { direction: parsed.data.direction, exampleUrls: parsed.data.example_urls, fresh: parsed.data.fresh });
+      const video_prompt = prompts[beat.id];
+      if (!video_prompt) throw new HttpError(502, "The brain returned no avatar prompt");
+      return Response.json({ video_prompt, usage });
+    }
     if (parsed.data.target === "video") {
       const { prompts, usage } = await writeVideoPrompts(board, full.subject, [beat], parsed.data.direction, parsed.data.attach_result && stillUrl ? { [beat.id]: stillUrl } : {}, parsed.data.example_urls, parsed.data.fresh);
       const video_prompt = prompts[beat.id];

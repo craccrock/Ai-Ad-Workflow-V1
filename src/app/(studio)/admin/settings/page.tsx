@@ -1,5 +1,6 @@
 import { SettingsForm } from "@/components/admin/settings-form";
 import { PageHeader } from "@/components/ui/misc";
+import { DEFAULT_AVATAR_PROMPT } from "@/config/board-avatar-prompt";
 import { DEFAULT_BRAIN_PROMPT } from "@/config/board-brain-prompt";
 import { DEFAULT_VIDEO_PROMPT } from "@/config/board-video-prompt";
 import { requireSessionProfile } from "@/lib/auth";
@@ -11,7 +12,7 @@ export default async function SettingsPage() {
   return (
     <>
       <PageHeader title="Settings" subtitle="The brain prompt and defaults behind the B-roll boards. Changes apply to the next split." />
-      <SettingsForm initial={settings} defaultPrompt={DEFAULT_BRAIN_PROMPT} defaultVideoPrompt={DEFAULT_VIDEO_PROMPT} anthropicConfigured={Boolean(process.env.ANTHROPIC_API_KEY)} />
+      <SettingsForm initial={settings} defaultPrompt={DEFAULT_BRAIN_PROMPT} defaultVideoPrompt={DEFAULT_VIDEO_PROMPT} defaultAvatarPrompt={DEFAULT_AVATAR_PROMPT} anthropicConfigured={Boolean(process.env.ANTHROPIC_API_KEY)} />
     </>
   );
 }

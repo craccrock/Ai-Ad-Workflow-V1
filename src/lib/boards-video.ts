@@ -3,19 +3,24 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getModel } from "@/config/models.config";
 import { HttpError } from "@/lib/auth";
 import { parseBrainJson, type BrainOutput } from "@/lib/boards";
+import { avatarDurationForBeat, avatarModelFor } from "@/lib/boards-avatar";
 import { getSettings } from "@/lib/settings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { imageBlockFromUrl } from "@/lib/vision";
 import type { Beat, Board, Subject } from "@/lib/types";
 
-/** Effective clip settings for a beat: its overrides, else the board's defaults, clamped to what the model offers. */
+/**
+ * Effective clip settings for a beat: its overrides, else the board's defaults, clamped to what the model offers.
+ * A-roll beats use the board's avatar model/quality and a length that fits their line.
+ */
 export function videoSettingsFor(board: Board, beat: Beat): { model: string; duration: number; resolution?: string } {
-  const modelId = beat.video_model ?? board.video_model;
+  const aroll = beat.role === "aroll";
+  const modelId = beat.video_model ?? (aroll ? avatarModelFor(board) : board.video_model);
   const model = getModel(modelId);
   const o = model?.options;
-  let duration = beat.video_duration ?? board.video_duration;
+  let duration = aroll ? avatarDurationForBeat(board, beat) : (beat.video_duration ?? board.video_duration);
   if (o?.durations && !o.durations.includes(duration)) duration = o.defaultDuration ?? o.durations[0];
-  let resolution = beat.video_resolution ?? board.video_resolution ?? undefined;
+  let resolution = beat.video_resolution ?? (aroll ? board.avatar_resolution : board.video_resolution) ?? undefined;
   if (o?.resolutions) {
     if (!resolution || !o.resolutions.includes(resolution)) resolution = o.defaultResolution ?? o.resolutions[0];
   } else resolution = undefined;

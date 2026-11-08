@@ -177,6 +177,10 @@ export type Board = {
   video_model: string;
   video_duration: number;
   video_resolution: string | null;
+  /** Avatar phase: the still every A-roll clip is animated from (else the subject's base image), and its model/quality. */
+  avatar_media_id: string | null;
+  avatar_model: string;
+  avatar_resolution: string | null;
   brain_output: { subject_lock?: string; style_locks?: Record<string, string> } | null;
   created_at: string;
   updated_at: string;

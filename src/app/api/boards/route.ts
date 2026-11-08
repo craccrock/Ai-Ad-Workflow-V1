@@ -45,6 +45,7 @@ export async function POST(request: Request) {
         subject_id: subjectId,
         model: settings.board_default_model,
         video_model: settings.board_default_video_model,
+        avatar_model: settings.board_default_avatar_model,
       })
       .select("*")
       .single();

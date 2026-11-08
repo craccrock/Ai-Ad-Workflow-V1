@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getModel } from "@/config/models.config";
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { canEditBoard, getBoardForActor, loadBoardWithBeats } from "@/lib/boards";
+import { avatarStillUrl } from "@/lib/boards-avatar";
 import { videoSettingsFor } from "@/lib/boards-video";
 import { createGenerations, serializeGeneration } from "@/lib/generations";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -30,19 +31,29 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
     const full = await loadBoardWithBeats(board);
     const beat = full.beats.find((b) => b.id === beatId);
     if (!beat) throw new HttpError(404, "Beat not found");
-    if (!beat.video_prompt?.trim()) throw new HttpError(422, "This beat has no video prompt yet");
-    const still = beat.generation_id ? full.generations[beat.generation_id] : null;
-    if (!still || still.status !== "completed" || !still.result_url) throw new HttpError(422, "Generate and pick a starter image first");
+    if (!beat.video_prompt?.trim()) throw new HttpError(422, beat.role === "aroll" ? "This beat has no avatar prompt yet" : "This beat has no video prompt yet");
+    // A-roll clips are the avatar still speaking its line (with voice); B-roll clips animate the beat's own starter image.
+    const aroll = beat.role === "aroll";
+    let startUrl: string;
+    if (aroll) {
+      const url = avatarStillUrl(full);
+      if (!url) throw new HttpError(422, "Add an avatar still in the Avatar tab (or give the subject a base image) first");
+      startUrl = url;
+    } else {
+      const still = beat.generation_id ? full.generations[beat.generation_id] : null;
+      if (!still || still.status !== "completed" || !still.result_url) throw new HttpError(422, "Generate and pick a starter image first");
+      startUrl = still.result_url;
+    }
 
     const settings = videoSettingsFor(board, beat);
     const model = getModel(settings.model);
     if (!model) throw new HttpError(400, `Unknown video model "${settings.model}"`);
     const params: Record<string, unknown> = {
       prompt: beat.video_prompt.trim(),
-      start_frame_url: still.result_url,
+      start_frame_url: startUrl,
       duration: settings.duration,
       resolution: settings.resolution,
-      generate_audio: false,
+      generate_audio: aroll,
     };
     if (model.options.aspectRatios && !model.options.aspectRatioTextOnly) params.aspect_ratio = board.aspect_ratio;
 
