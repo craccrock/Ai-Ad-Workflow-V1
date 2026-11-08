@@ -32,7 +32,7 @@ export const hasVideoPrompt = (b: Pick<Beat, "video_prompt">) => (b.video_prompt
  * Writes (or rewrites) video prompts for the given beats in one Claude call. `direction` is an optional
  * editor note applied to every beat in the batch (single-beat "reprompt" passes one beat + its direction).
  */
-export async function writeVideoPrompts(board: Board, subject: Subject | null, beats: Beat[], direction?: string, stills: Record<string, string> = {}): Promise<{ prompts: Record<string, string>; usage: { input: number; output: number } }> {
+export async function writeVideoPrompts(board: Board, subject: Subject | null, beats: Beat[], direction?: string, stills: Record<string, string> = {}, exampleUrls: string[] = []): Promise<{ prompts: Record<string, string>; usage: { input: number; output: number } }> {
   if (!process.env.ANTHROPIC_API_KEY) throw new HttpError(503, "ANTHROPIC_API_KEY is not set — add it to the environment to write video prompts");
   if (!beats.length) throw new HttpError(400, "No beats to write video prompts for");
 
@@ -64,6 +64,11 @@ export async function writeVideoPrompts(board: Board, subject: Subject | null, b
     if (!url) continue;
     const block = await imageBlockFromUrl(url);
     if (block) content.push({ type: "text", text: `Starter image for beat ${b.id}:` }, block);
+  }
+  let n = 0;
+  for (const url of exampleUrls) {
+    const block = await imageBlockFromUrl(url);
+    if (block) content.push({ type: "text", text: `EXAMPLE ${++n} from the editor (a look/framing to aim for; describe its qualities in words):` }, block);
   }
   content.push({ type: "text", text: content.length ? "Write each video_prompt from its starter image above (that exact frame is what gets animated). Produce the JSON for the BEATS." : "Produce the JSON for the BEATS above." });
 

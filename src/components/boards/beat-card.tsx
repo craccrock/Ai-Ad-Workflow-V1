@@ -1,8 +1,9 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Clapperboard, Download, ExternalLink, Loader2, Merge, Plus, RotateCw, Scissors, Sparkles, Trash2, TriangleAlert, Wand2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Clapperboard, Download, ExternalLink, FolderOpen, ImagePlus, Loader2, Merge, Plus, RotateCw, Scissors, Sparkles, Trash2, TriangleAlert, Upload, Wand2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { LibraryPicker } from "@/components/library/library-picker";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { NativeSelect, Textarea } from "@/components/ui/input";
@@ -13,6 +14,7 @@ import { getModel, models } from "@/config/models.config";
 import { api, downloadFile, type ApiGeneration, type ApiMedia } from "@/lib/client-api";
 import { describeFailure, describeInFlight } from "@/lib/job-status";
 import type { Beat, Media, Subject } from "@/lib/types";
+import { ACCEPT, uploadMedia } from "@/lib/upload";
 import { cn, formatUsd } from "@/lib/utils";
 import { RefSlot } from "./ref-slot";
 
@@ -87,28 +89,114 @@ function Result({ gen, generating, kind }: { gen: ApiGeneration | null; generati
   return <ImageThumb src={gen.result_url} alt={gen.prompt ?? ""} sizes="(max-width: 640px) 100vw, 360px" className="object-contain" />;
 }
 
-/** The direction box under a prompt: Enter sends, Shift+Enter breaks a line, Esc closes. */
-function DirectionBox({ open, busy, placeholder, attachment, onClose, onSubmit }: { open: boolean; busy: boolean; placeholder: string; attachment?: { url: string; label: string } | null; onClose: () => void; onSubmit: (direction: string, attach: boolean) => Promise<void> }) {
+/** An example image the editor attached to a reprompt: a library/upload row, or just a URL dropped in. */
+export type ExampleImage = { url: string; media?: ApiMedia };
+
+/** Turns a dropped/pasted string into an image URL we can show Claude (unwraps Next's /_next/image thumbnails). */
+function imageUrlFromText(text: string): string | null {
+  const t = text.trim().split(/\s+/)[0] ?? "";
+  if (!/^https?:\/\//i.test(t)) return null;
+  try {
+    const u = new URL(t);
+    if (u.pathname === "/_next/image") {
+      const inner = u.searchParams.get("url");
+      return inner && /^https?:\/\//i.test(inner) ? inner : null;
+    }
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+/** The direction box under a prompt: Enter sends, Shift+Enter breaks a line, Esc closes. Drop, paste, pick or upload example images for Claude to look at. */
+function DirectionBox({
+  open,
+  busy,
+  placeholder,
+  attachment,
+  userId,
+  allowAddToRefs,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  busy: boolean;
+  placeholder: string;
+  attachment?: { url: string; label: string } | null;
+  userId: string;
+  /** Offer "also add these to the beat's reference images" (image prompts only). */
+  allowAddToRefs?: boolean;
+  onClose: () => void;
+  onSubmit: (direction: string, attach: boolean, examples: ExampleImage[], addToRefs: boolean) => Promise<void>;
+}) {
   const [direction, setDirection] = useState("");
   const [attach, setAttach] = useState(true);
+  const [examples, setExamples] = useState<ExampleImage[]>([]);
+  const [addToRefs, setAddToRefs] = useState(false);
+  const [picker, setPicker] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const MAX_EXAMPLES = 6;
   useEffect(() => {
     if (open) ref.current?.focus();
   }, [open]);
   if (!open) return null;
+
+  const addExample = (ex: ExampleImage) => setExamples((cur) => (cur.length >= MAX_EXAMPLES || cur.some((e) => e.url === ex.url) ? cur : [...cur, ex]));
+  const uploadFiles = async (files: File[]) => {
+    const images = files.filter((f) => f.type.startsWith("image/"));
+    if (!images.length) return;
+    setUploading(true);
+    try {
+      for (const f of images.slice(0, MAX_EXAMPLES)) {
+        const m = await uploadMedia(f, userId);
+        addExample({ url: m.url, media: m });
+      }
+    } catch (e) {
+      toast.error("Upload failed", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setUploading(false);
+    }
+  };
   const send = async () => {
     const d = direction.trim();
-    if (!d || busy) return;
-    await onSubmit(d, Boolean(attachment) && attach);
+    if (!d || busy || uploading) return;
+    await onSubmit(d, Boolean(attachment) && attach, examples, allowAddToRefs === true && addToRefs && examples.some((e) => e.media));
     setDirection("");
+    setExamples([]);
+    setAddToRefs(false);
   };
   return (
-    <div className="mt-2 rounded-[6px] border border-gold/40 bg-navy-2 p-2">
+    <div
+      className="mt-2 rounded-[6px] border border-gold/40 bg-navy-2 p-2"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        const files = Array.from(e.dataTransfer.files ?? []);
+        if (files.length) return void uploadFiles(files);
+        const url = imageUrlFromText(e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain"));
+        if (url) addExample({ url });
+      }}
+    >
       <label className="mb-1 block text-[10px] font-medium uppercase tracking-[0.08em] text-cream-2">Direction for the rewrite</label>
       <Textarea
         ref={ref}
         value={direction}
         onChange={(e) => setDirection(e.target.value)}
+        onPaste={(e) => {
+          const files = Array.from(e.clipboardData.files ?? []);
+          if (files.length) {
+            e.preventDefault();
+            void uploadFiles(files);
+            return;
+          }
+          const url = imageUrlFromText(e.clipboardData.getData("text/plain"));
+          if (url && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(url)) {
+            e.preventDefault();
+            addExample({ url });
+          }
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
@@ -121,6 +209,39 @@ function DirectionBox({ open, busy, placeholder, attachment, onClose, onSubmit }
         className="font-sans text-[12px]"
         placeholder={placeholder}
       />
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {examples.map((ex, i) => (
+          <div key={ex.url} className="group relative h-16 w-12 overflow-hidden rounded-[4px] border border-hairline bg-navy" title={ex.media?.filename ?? ex.url}>
+            <ImageThumb src={ex.url} alt="" sizes="64px" className="object-cover" />
+            <span className="absolute bottom-0 left-0 bg-navy/80 px-1 font-mono text-[9px] text-cream-2">ex {i + 1}</span>
+            {!busy ? (
+              <button type="button" aria-label="Remove example" onClick={() => setExamples((cur) => cur.filter((e) => e.url !== ex.url))} className="absolute right-0.5 top-0.5 rounded-full bg-navy/80 p-0.5 text-cream-2 hover:text-cream">
+                <X className="size-3" />
+              </button>
+            ) : null}
+          </div>
+        ))}
+        {examples.length < MAX_EXAMPLES ? (
+          <div className="flex items-center gap-2 text-[11px] text-cream-2">
+            {uploading ? <Loader2 className="size-3.5 animate-spin text-gold" /> : <ImagePlus className="size-3.5 text-muted" />}
+            <button type="button" disabled={busy || uploading} onClick={() => setPicker(true)} className="flex items-center gap-1 hover:text-cream disabled:opacity-50">
+              <FolderOpen className="size-3.5" /> Library
+            </button>
+            <button type="button" disabled={busy || uploading} onClick={() => fileRef.current?.click()} className="flex items-center gap-1 hover:text-cream disabled:opacity-50">
+              <Upload className="size-3.5" /> Upload
+            </button>
+            <span className="text-[10px] text-muted">or drop / paste an example image here</span>
+          </div>
+        ) : null}
+      </div>
+      {examples.length && allowAddToRefs && examples.some((e) => e.media) ? (
+        <label className="mt-1.5 flex items-center gap-2 text-[11px] text-cream-2">
+          <input type="checkbox" checked={addToRefs} disabled={busy} onChange={(e) => setAddToRefs(e.target.checked)} className="accent-gold" />
+          Also add {examples.filter((e) => e.media).length === 1 ? "it" : "them"} to this beat&apos;s reference images, so the image model sees {examples.filter((e) => e.media).length === 1 ? "it" : "them"} too
+        </label>
+      ) : null}
+
       {attachment ? (
         <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-[6px] border border-hairline bg-field/60 p-1.5 text-[11px] text-cream-2">
           <input type="checkbox" checked={attach} disabled={busy} onChange={(e) => setAttach(e.target.checked)} className="accent-gold" />
@@ -136,12 +257,24 @@ function DirectionBox({ open, busy, placeholder, attachment, onClose, onSubmit }
           <Button variant="ghost" size="sm" disabled={busy} onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="gold" size="sm" disabled={busy || !direction.trim()} onClick={() => void send()}>
+          <Button variant="gold" size="sm" disabled={busy || uploading || !direction.trim()} onClick={() => void send()}>
             {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Wand2 className="size-3.5" />}
             {busy ? "Rewriting…" : "Reprompt"}
           </Button>
         </div>
       </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept={ACCEPT.image}
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          void uploadFiles(Array.from(e.target.files ?? []));
+          e.target.value = "";
+        }}
+      />
+      <LibraryPicker type="image" open={picker} onOpenChange={setPicker} onPick={(m) => addExample({ url: m.url, media: m })} title="Choose an example image for Claude" />
     </div>
   );
 }
@@ -256,11 +389,11 @@ export function BeatCard({
   onDelete: () => void;
   onGenerate: () => void;
   /** Ask the brain to rewrite the image prompt; resolves with the new prompt. */
-  onReprompt: (direction: string, attachResult: boolean) => Promise<{ prompt: string; diagnosis?: string }>;
+  onReprompt: (direction: string, attachResult: boolean, exampleUrls: string[]) => Promise<{ prompt: string; diagnosis?: string }>;
   /** Step through earlier takes; the editor fetches the generation and swaps it in. */
   onShowGeneration: (id: string) => void;
   onAnimate: () => void;
-  onRepromptVideo: (direction: string, attachResult: boolean) => Promise<{ prompt: string; diagnosis?: string }>;
+  onRepromptVideo: (direction: string, attachResult: boolean, exampleUrls: string[]) => Promise<{ prompt: string; diagnosis?: string }>;
   onShowVideoGeneration: (id: string) => void;
 }) {
   const [splitOpen, setSplitOpen] = useState(false);
@@ -273,10 +406,17 @@ export function BeatCard({
   /** Empty extra slots opened with "Add reference" that have no image yet. */
   const [pendingExtras, setPendingExtras] = useState(0);
 
-  async function submitReprompt(direction: string, attach: boolean) {
+  async function submitReprompt(direction: string, attach: boolean, examples: ExampleImage[], addToRefs: boolean) {
     setReprompting(true);
     try {
-      const r = await onReprompt(direction, attach);
+      const r = await onReprompt(direction, attach, examples.map((e) => e.url));
+      if (addToRefs) {
+        const ids = examples.map((e) => e.media).filter((m): m is ApiMedia => Boolean(m));
+        ids.forEach(onMedia);
+        const cur = beat.extra_media_ids ?? [];
+        const next = [...cur, ...ids.map((m) => m.id).filter((id) => !cur.includes(id))].slice(0, 5);
+        if (next.length !== cur.length) onPatch({ extra_media_ids: next });
+      }
       setRepromptOpen(false);
       setPromptOpen(true);
       toast.success("Reprompt ready!", { duration: r.diagnosis ? 8000 : 1500, description: r.diagnosis ? `Claude saw: ${r.diagnosis}` : undefined });
@@ -286,10 +426,10 @@ export function BeatCard({
       setReprompting(false);
     }
   }
-  async function submitVideoReprompt(direction: string, attach: boolean) {
+  async function submitVideoReprompt(direction: string, attach: boolean, examples: ExampleImage[]) {
     setVideoReprompting(true);
     try {
-      await onRepromptVideo(direction, attach);
+      await onRepromptVideo(direction, attach, examples.map((e) => e.url));
       setVideoRepromptOpen(false);
       setVideoPromptOpen(true);
       toast.success("Video prompt ready!", { duration: 1500 });
@@ -417,6 +557,8 @@ export function BeatCard({
               busy={reprompting}
               placeholder="e.g. put her in a knit top in front of a full-height mirror in a bigger bathroom; remove the phone; make the prompt longer and more detailed — or: this gen has a fused hand and the wrong skin tone, fix the prompt so it can't happen again"
               attachment={stillReady ? { url: generation!.result_url!, label: `Show Claude this result (take ${takes.indexOf(generation!.id) + 1}) so it can see what went wrong` } : null}
+              userId={userId}
+              allowAddToRefs
               onClose={() => setRepromptOpen(false)}
               onSubmit={submitReprompt}
             />
@@ -492,6 +634,7 @@ export function BeatCard({
                 busy={videoReprompting}
                 placeholder={(beat.video_prompt?.trim().length ?? 0) >= 200 ? "e.g. slower, she looks over her shoulder at the end; no camera movement; make it longer and more detailed" : "Optional direction, or just press Reprompt to draft it from the VO and image prompt"}
                 attachment={stillReady ? { url: generation!.result_url!, label: "Show Claude the starter image so the motion matches what's in frame" } : null}
+                userId={userId}
                 onClose={() => setVideoRepromptOpen(false)}
                 onSubmit={submitVideoReprompt}
               />

@@ -10,6 +10,8 @@ const bodySchema = z.object({
   target: z.enum(["image", "video"]).default("image"),
   /** Show Claude the beat's current result (image target) or starter still (video target) so it can see what went wrong. */
   attach_result: z.boolean().default(false),
+  /** Example images the editor wants Claude to look at (the look, framing, realism to aim for). */
+  example_urls: z.array(z.string().url().startsWith("https://")).max(6).default([]),
 });
 
 /** POST /api/boards/:id/beats/:beatId/reprompt — asks the brain to rewrite the beat's image prompt per the editor's direction. */
@@ -28,12 +30,12 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
     const still = beat.generation_id ? full.generations[beat.generation_id] : null;
     const stillUrl = still?.status === "completed" && still.result_url ? still.result_url : null;
     if (parsed.data.target === "video") {
-      const { prompts, usage } = await writeVideoPrompts(board, full.subject, [beat], parsed.data.direction, parsed.data.attach_result && stillUrl ? { [beat.id]: stillUrl } : {});
+      const { prompts, usage } = await writeVideoPrompts(board, full.subject, [beat], parsed.data.direction, parsed.data.attach_result && stillUrl ? { [beat.id]: stillUrl } : {}, parsed.data.example_urls);
       const video_prompt = prompts[beat.id];
       if (!video_prompt) throw new HttpError(502, "The brain returned no video prompt");
       return Response.json({ video_prompt, usage });
     }
     const refs = beatReferences(beat, full.subject, full.media);
-    return Response.json(await repromptBeat(board, full.subject, beat, parsed.data.direction, refs, { resultUrl: parsed.data.attach_result ? stillUrl : null }));
+    return Response.json(await repromptBeat(board, full.subject, beat, parsed.data.direction, refs, { resultUrl: parsed.data.attach_result ? stillUrl : null, exampleUrls: parsed.data.example_urls }));
   });
 }

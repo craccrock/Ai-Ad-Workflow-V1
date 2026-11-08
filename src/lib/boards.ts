@@ -199,7 +199,7 @@ export function beatReferences(beat: Beat, subject: Subject | null, media: Recor
  * Rewrites one beat's image prompt according to the editor's direction, keeping the subject lock,
  * style locks and the beat's job in the script intact. Returns the new prompt (plain text).
  */
-export async function repromptBeat(board: Board, subject: Subject | null, beat: Beat, direction: string, refs: { slot: string }[], opts: { resultUrl?: string | null } = {}): Promise<{ image_prompt: string; diagnosis?: string; usage: { input: number; output: number } }> {
+export async function repromptBeat(board: Board, subject: Subject | null, beat: Beat, direction: string, refs: { slot: string }[], opts: { resultUrl?: string | null; exampleUrls?: string[] } = {}): Promise<{ image_prompt: string; diagnosis?: string; usage: { input: number; output: number } }> {
   if (!process.env.ANTHROPIC_API_KEY) throw new HttpError(503, "ANTHROPIC_API_KEY is not set — add it to the environment to use reprompt");
   if (!direction.trim()) throw new HttpError(400, "Give a direction first");
 
@@ -219,7 +219,8 @@ Rules:
 - Default length: a dense paragraph (80–160 words). If the direction asks for longer or more detailed, go to 160–260 words with concrete lighting, lens, framing, wardrobe, texture and setting detail. If it asks for shorter, cut.
 - Photoreal unless the style locks say otherwise. 9:16 vertical.
 - If an image is attached, it is what the CURRENT PROMPT actually produced. Study it first and list what went wrong against the intent and the direction (wrong person or skin tone, extra or fused fingers, warped anatomy, wrong framing, missing props or wardrobe, text, stylised or CGI look, wrong setting). Then write the new prompt so those faults cannot recur: state the correct version explicitly and positively (what the hands do, how many people, exact wardrobe, exact framing), and keep everything that was already right.
-- Output: if an image was attached, the first line is "DIAGNOSIS: <one or two plain sentences>", then a blank line, then the prompt. Otherwise output only the prompt text.
+- If EXAMPLE images are attached, they show the look the editor is aiming for (realism, lighting, framing, skin and surface texture, colour, lens feel). Translate those qualities into concrete words in the new prompt, applying the direction (e.g. "like this but the camera a little farther back"). Examples are NOT sent to the image model unless the editor also adds them as references, so the words must carry the look.
+- Output: if a result image was attached, the first line is "DIAGNOSIS: <one or two plain sentences>", then a blank line, then the prompt. Otherwise output only the prompt text.
 
 SUBJECT LOCK: ${subjectLock}
 STYLE LOCKS:
@@ -236,8 +237,15 @@ ${direction.trim()}
 
 Write the new prompt.`;
 
+  const content: Anthropic.ContentBlockParam[] = [];
   const resultImage = opts.resultUrl ? await imageBlockFromUrl(opts.resultUrl) : null;
-  const content: Anthropic.ContentBlockParam[] = resultImage ? [{ type: "text", text: "This is the image the CURRENT PROMPT produced:" }, resultImage, { type: "text", text: user }] : [{ type: "text", text: user }];
+  if (resultImage) content.push({ type: "text", text: "This is the image the CURRENT PROMPT produced:" }, resultImage);
+  let n = 0;
+  for (const url of opts.exampleUrls ?? []) {
+    const block = await imageBlockFromUrl(url);
+    if (block) content.push({ type: "text", text: `EXAMPLE ${++n} from the editor (the look to aim for):` }, block);
+  }
+  content.push({ type: "text", text: user });
 
   const client = new Anthropic();
   const message = await client.messages.stream({ model: settings.board_brain_model, max_tokens: 2500, system, messages: [{ role: "user", content }] }).finalMessage();

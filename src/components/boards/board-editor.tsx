@@ -312,9 +312,9 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     });
 
   const reprompt = useCallback(
-    async (beatId: string, direction: string, attachResult: boolean) => {
+    async (beatId: string, direction: string, attachResult: boolean, exampleUrls: string[]) => {
       await flush();
-      const r = await api<{ image_prompt: string; diagnosis?: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction, attach_result: attachResult } });
+      const r = await api<{ image_prompt: string; diagnosis?: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction, attach_result: attachResult, example_urls: exampleUrls } });
       // Patch against the latest beats so edits made while waiting aren't lost.
       update(beatsRef.current.map((b) => (b.id === beatId ? { ...b, image_prompt: r.image_prompt } : b)));
       return { prompt: r.image_prompt, diagnosis: r.diagnosis };
@@ -323,9 +323,9 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   );
 
   const repromptVideo = useCallback(
-    async (beatId: string, direction: string, attachResult: boolean) => {
+    async (beatId: string, direction: string, attachResult: boolean, exampleUrls: string[]) => {
       await flush();
-      const r = await api<{ video_prompt: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction, target: "video", attach_result: attachResult } });
+      const r = await api<{ video_prompt: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction, target: "video", attach_result: attachResult, example_urls: exampleUrls } });
       update(beatsRef.current.map((b) => (b.id === beatId ? { ...b, video_prompt: r.video_prompt } : b)));
       return { prompt: r.video_prompt };
     },
@@ -606,10 +606,10 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 onInsertAfter={() => insertAfter(beat.id)}
                 onDelete={() => deleteBeat(beat.id)}
                 onGenerate={() => void generate(beat.id)}
-                onReprompt={(direction, attach) => reprompt(beat.id, direction, attach)}
+                onReprompt={(direction, attach, examples) => reprompt(beat.id, direction, attach, examples)}
                 onShowGeneration={(id) => void showGeneration(beat.id, id)}
                 onAnimate={() => void animate(beat.id)}
-                onRepromptVideo={(direction, attach) => repromptVideo(beat.id, direction, attach)}
+                onRepromptVideo={(direction, attach, examples) => repromptVideo(beat.id, direction, attach, examples)}
                 onShowVideoGeneration={(id) => void showGeneration(beat.id, id, "video")}
               />
             ))}
