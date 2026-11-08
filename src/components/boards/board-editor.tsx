@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input, Label, NativeSelect, Textarea } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
-import { AVATAR_MODEL_IDS, avatarDurationFor, DEFAULT_AVATAR_MODEL, wordCount } from "@/config/avatar";
+import { AVATAR_MODEL_IDS, avatarDurationFor, DEFAULT_AVATAR_MODEL } from "@/config/avatar";
 import { getModel, models } from "@/config/models.config";
 import { api, downloadFile, type ApiGeneration, type ApiMedia } from "@/lib/client-api";
 import { estimateCost } from "@/lib/generation-params";
@@ -134,7 +134,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     },
     [avatarModel, avatarResolution],
   );
-  const avatarDurationOf = useCallback((c: Pick<AvatarChunk, "vo" | "duration">) => (c.duration && avatarDurations.includes(c.duration) ? c.duration : avatarDurationFor(wordCount(c.vo), avatarDurations)), [avatarDurations]);
+  const avatarDurationOf = useCallback((c: Pick<AvatarChunk, "vo" | "duration">) => (c.duration && avatarDurations.includes(c.duration) ? c.duration : avatarDurationFor(c.vo, avatarDurations)), [avatarDurations]);
 
   const perImage = useMemo(() => {
     try {
@@ -520,7 +520,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
       const res = await api<{ chunks: AvatarChunk[]; usage: { input: number; output: number } }>(`/api/boards/${initial.id}/avatar/chunks`, { method: "POST", json: {} });
       setChunks(res.chunks);
       setChunkSave("saved");
-      toast.success(`Script cut into ${res.chunks.length} chunk${res.chunks.length === 1 ? "" : "s"}`, { description: "Next: write the avatar prompts." });
+      toast.success(`Script cut into ${res.chunks.length} chunk${res.chunks.length === 1 ? "" : "s"}`, { description: "Packed at quick UGC pace. Next: write the avatar prompts." });
     } catch (e) {
       toast.error("Couldn't chunk the script", { description: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -816,7 +816,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                   <div>
                     <Label className="mb-1.5">Clip lengths</Label>
                     <p className="text-[12px] text-cream">{avatarDurations.map((d) => `${d}s`).join(" / ")}</p>
-                    <p className="text-[11px] text-muted">picked per line from its word count{avatarClipCost(avatarDurations[avatarDurations.length - 1]) != null ? ` · up to ${formatUsd(avatarClipCost(avatarDurations[avatarDurations.length - 1])!)} a clip` : ""}</p>
+                    <p className="text-[11px] text-muted">picked per chunk from its speaking time{avatarClipCost(avatarDurations[avatarDurations.length - 1]) != null ? ` · up to ${formatUsd(avatarClipCost(avatarDurations[avatarDurations.length - 1])!)} a clip` : ""}</p>
                   </div>
                 </div>
               </div>
@@ -838,7 +838,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                   </>
                 ) : (
                   <>
-                    <Button variant="outline" size="sm" disabled={!canEdit || chunking || (!board.script.trim() && !beats.length)} onClick={() => void chunkScript()} title={`Have Claude cut the whole script into pieces that each fit one ${Math.max(...avatarDurations)}s-or-shorter clip`}>
+                    <Button variant="outline" size="sm" disabled={!canEdit || chunking || (!board.script.trim() && !beats.length)} onClick={() => void chunkScript()} title={`Cut the whole script into as few clips as possible, each one ${Math.max(...avatarDurations)}s or shorter at quick UGC pace`}>
                       {chunking ? <Loader2 className="animate-spin" /> : <Scissors />} {chunking ? "Chunking…" : chunks.length ? "Re-chunk script" : "Chunk script"}
                     </Button>
                     <Button variant="outline" size="sm" disabled={!canEdit || writingAvatar || !chunks.length || !avatarReady} onClick={() => void writeAvatarPrompts("missing")} title="Write a talking-head prompt for every chunk that has none yet">
@@ -872,7 +872,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
             {chunks.length === 0 ? (
               <div className="rounded-[8px] border border-dashed border-hairline px-6 py-16 text-center">
                 <p className="font-serif text-xl text-cream">No chunks yet</p>
-                <p className="mt-2 text-sm text-cream-2">Press Chunk script. Claude cuts the whole script into pieces she can say in one clip, in order. The storyboard beats are untouched.</p>
+                <p className="mt-2 text-sm text-cream-2">Press Chunk script. The whole script is packed into as few clips as possible, in order, at quick UGC pace. The storyboard beats are untouched.</p>
               </div>
             ) : (
               <div className="space-y-4">

@@ -1,7 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
-import { AVATAR_WORDS_PER_SECOND, avatarDurationFor, DEFAULT_AVATAR_MODEL, maxAvatarWords, wordCount } from "@/config/avatar";
-import { AVATAR_CHUNK_PROMPT } from "@/config/board-avatar-prompt";
+import { AVATAR_SYLLABLES_PER_SECOND, avatarDurationFor, DEFAULT_AVATAR_MODEL, packParagraph, speechSeconds, wordCount } from "@/config/avatar";
 import { getModel } from "@/config/models.config";
 import { HttpError } from "@/lib/auth";
 import { parseBrainJson, type BrainOutput } from "@/lib/boards";
@@ -24,7 +23,7 @@ export function avatarSettingsFor(board: Board, chunk: Pick<AvatarChunk, "vo" | 
   const modelId = avatarModelFor(board);
   const o = getModel(modelId)?.options;
   const durations = o?.durations;
-  let duration = chunk.duration && (!durations || durations.includes(chunk.duration)) ? chunk.duration : avatarDurationFor(wordCount(chunk.vo), durations);
+  let duration = chunk.duration && (!durations || durations.includes(chunk.duration)) ? chunk.duration : avatarDurationFor(chunk.vo, durations);
   if (durations && !durations.includes(duration)) duration = o?.defaultDuration ?? durations[0];
   let resolution = board.avatar_resolution ?? undefined;
   if (o?.resolutions) {
@@ -49,53 +48,27 @@ const anthropic = () => {
 
 // ─── chunking ────────────────────────────────────────────────────────────────
 
-type ChunkOutput = { groups?: { group?: number; chunks?: { vo?: string; duration?: number }[] }[] };
-
 /**
  * Cuts the WHOLE script into clip-sized chunks the avatar speaks in order, and replaces the board's chunk list.
- * Paragraphs of the script are chunked as separate groups so a cut never crosses a paragraph break.
- * Falls back to the storyboard beats' lines when the script box is empty.
+ * Deterministic: paragraphs are packed sentence by sentence into as few clips as possible, using the calibrated
+ * speaking pace (see config/avatar.ts), so a 9 s pair of lines becomes one 10 s clip, not two. Words are never
+ * changed. Falls back to the storyboard beats' lines when the script box is empty.
  */
 export async function chunkScript(board: Board, beatLines: string[]): Promise<{ chunks: AvatarChunk[]; usage: { input: number; output: number } }> {
   const model = getModel(avatarModelFor(board));
   const durations = model?.options.durations ?? [4, 6, 8, 10];
-  const maxWords = maxAvatarWords(durations);
 
   const source = board.script.trim() || beatLines.map((l) => l.trim()).filter(Boolean).join("\n\n");
   if (!source) throw new HttpError(422, "Paste the script first");
   const paragraphs = source.split(/\n\s*\n/).map((p) => p.replace(/\s+/g, " ").trim()).filter(Boolean);
-  const groups = paragraphs.map((text, g) => ({ group: g + 1, text }));
 
-  const system = AVATAR_CHUNK_PROMPT.replace("{{DURATIONS}}", durations.join(", ")).replace(/\{\{MAX_WORDS\}\}/g, String(maxWords)).replace("{{GROUPS}}", `\n${groups.map((g) => JSON.stringify(g)).join("\n")}`);
-  const settings = await getSettings();
-  const message = await anthropic()
-    .messages.stream({ model: settings.board_brain_model, max_tokens: 16000, system, messages: [{ role: "user", content: "Produce the JSON for the GROUPS above." }] })
-    .finalMessage();
-  if (message.stop_reason === "refusal") throw new HttpError(502, "The brain declined this script");
-  if (message.stop_reason === "max_tokens") throw new HttpError(502, "The script is too long for one pass");
-  const text = message.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("");
-  const out = parseBrainJson(text) as unknown as ChunkOutput;
-
-  // Every group must come back with its words intact (loosely: same word count within 10%).
-  const byGroup = new Map<number, { vo: string; duration: number }[]>();
-  for (const g of out.groups ?? []) {
-    if (!g.group || !Array.isArray(g.chunks)) continue;
-    const chunks = g.chunks.map((c) => ({ vo: (c.vo ?? "").trim(), duration: Number(c.duration) || 0 })).filter((c) => c.vo);
-    if (chunks.length) byGroup.set(g.group, chunks);
-  }
   const rows: Omit<AvatarChunk, "id" | "created_at">[] = [];
-  for (const g of groups) {
-    const chunks = byGroup.get(g.group);
-    if (!chunks) throw new HttpError(502, `The brain returned nothing for paragraph ${g.group}`);
-    const want = wordCount(g.text);
-    const got = chunks.reduce((n, c) => n + wordCount(c.vo), 0);
-    if (Math.abs(got - want) > Math.max(2, want * 0.1)) throw new HttpError(502, `The brain changed the words in paragraph ${g.group} (${got} vs ${want}) — try again`);
-    for (const c of chunks) {
-      const computed = avatarDurationFor(wordCount(c.vo), durations);
-      const duration = durations.includes(c.duration) && c.duration >= computed ? c.duration : computed;
-      rows.push({ board_id: board.id, position: rows.length, vo: c.vo, duration, video_prompt: null, generation_id: null, generation_ids: [] });
+  for (const paragraph of paragraphs) {
+    for (const vo of packParagraph(paragraph, durations)) {
+      rows.push({ board_id: board.id, position: rows.length, vo, duration: avatarDurationFor(vo, durations), video_prompt: null, generation_id: null, generation_ids: [] });
     }
   }
+  if (!rows.length) throw new HttpError(422, "Nothing to chunk");
 
   const admin = createAdminClient();
   const { error: delErr } = await admin.from("avatar_chunks").delete().eq("board_id", board.id);
@@ -104,7 +77,7 @@ export async function chunkScript(board: Board, beatLines: string[]): Promise<{ 
   if (error) throw new HttpError(500, error.message);
   await admin.from("boards").update({ updated_at: new Date().toISOString() }).eq("id", board.id);
   const chunks = ((data ?? []) as AvatarChunk[]).sort((a, b) => a.position - b.position);
-  return { chunks, usage: { input: message.usage.input_tokens, output: message.usage.output_tokens } };
+  return { chunks, usage: { input: 0, output: 0 } };
 }
 
 // ─── prompt writing ──────────────────────────────────────────────────────────
@@ -136,6 +109,7 @@ export async function writeAvatarPrompts(
       id: c.id,
       vo: c.vo,
       words: wordCount(c.vo),
+      speech_seconds_estimate: Math.round(speechSeconds(c.vo) * 10) / 10,
       duration_seconds: avatarSettingsFor(board, c).duration,
       previous_line: k > 0 ? allChunks[k - 1].vo : undefined,
       next_line: k >= 0 && k < allChunks.length - 1 ? allChunks[k + 1].vo : undefined,
@@ -146,7 +120,7 @@ export async function writeAvatarPrompts(
   });
   const system = settings.board_avatar_prompt
     .replace("{{SUBJECT_LOCK}}", subjectLock)
-    .replace("{{DURATIONS}}", `${durations.join(", ")} (about ${AVATAR_WORDS_PER_SECOND} words per second)`)
+    .replace("{{DURATIONS}}", `${durations.join(", ")} (quick UGC pace: about ${AVATAR_SYLLABLES_PER_SECOND} syllables ≈ 3.9 words per second)`)
     .replace("{{BEATS}}", `\n${lines.join("\n")}`);
 
   const content: Anthropic.ContentBlockParam[] = [];

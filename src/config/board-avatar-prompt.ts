@@ -13,7 +13,7 @@ export const DEFAULT_AVATAR_PROMPT = `You write image-to-video prompts for AI UG
 INPUTS
 SUBJECT_LOCK (who she is): {{SUBJECT_LOCK}}
 AVATAR STILL: attached below. It is the exact frame that gets animated. Read everything from it — where the phone is, her pose, where each hand is, wardrobe, hair, jewellery, the room, the light. Never invent a pose or prop that is not in the still.
-CLIP LENGTHS the model offers, in seconds: {{DURATIONS}}. Speech lands at about 2.6 words per second; the line must finish about a second before the clip ends.
+CLIP LENGTHS the model offers, in seconds: {{DURATIONS}}. Delivery is quick UGC pace, about 3.9 words per second; the line must finish about half a second before the clip ends.
 BEATS (one JSON object per line; each needs its own prompt): {{BEATS}}
 
 OUTPUT SHAPE
@@ -34,23 +34,5 @@ RULES
 - If a beat carries "direction" from the editor, apply it to that beat (it may change the gestures, mood, pacing or closing expression — never the words of the line). If it carries "start_from_scratch", ignore its current_video_prompt entirely.
 - If EXAMPLE images are attached, they show a look or energy the editor is aiming for; describe those qualities in words.
 - Everything is plain prose in one string per beat. No headings, no bullet points, no line numbers, no quotes around the whole prompt.
-
-Reply with ONLY the JSON.`;
-
-/** System prompt for re-chunking the A-roll lines so each fits one clip. Not editable in Settings. */
-export const AVATAR_CHUNK_PROMPT = `You split a UGC ad's talking-head narration into clips a talking-head video model can voice in one take. Your entire reply is machine-parsed as JSON — output ONLY the JSON object.
-
-CLIP LENGTHS the model offers, in seconds: {{DURATIONS}}. Speech lands at about 2.6 words per second and the line must finish about a second before the clip ends, so the longest clip holds at most {{MAX_WORDS}} words. Aim for chunks of 12–{{MAX_WORDS}} words; a chunk may be shorter only when the thought is genuinely short.
-
-GROUPS (each is one stretch of narration, in order): {{GROUPS}}
-
-RULES
-- Keep the words VERBATIM. Never paraphrase, drop, add or reorder words. Every word of a group appears exactly once across its chunks, in order. You may only adjust punctuation at a cut.
-- Cut at natural breath points: sentence ends first, then strong clause breaks ("…were “nothing to worry about,” | “it's just part of getting older.”"). Never cut mid-phrase or between an adjective and its noun.
-- Each chunk is a complete, speakable thought that ends on a landing (a period, a question, an exclamation, or a clear clause end), so the clip can hold on her face for a beat.
-- Pick each chunk's duration from CLIP LENGTHS: the smallest one with (words ÷ 2.6) + 1 ≤ duration.
-
-OUTPUT SHAPE
-{"groups":[{"group":<number from GROUPS>,"chunks":[{"vo":"<words>","duration":<seconds>}]}]}
 
 Reply with ONLY the JSON.`;

@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
-import { AVATAR_WORDS_PER_SECOND, avatarDurationFor, wordCount } from "@/config/avatar";
+import { avatarDurationFor, lineTooLong, speechSeconds, wordCount } from "@/config/avatar";
 import type { ModelConfig } from "@/config/models.config";
 import { downloadFile, type ApiGeneration } from "@/lib/client-api";
 import type { AvatarChunk } from "@/lib/types";
@@ -57,9 +57,10 @@ export function AvatarCard({
 
   const durations = model.options.durations ?? [];
   const words = wordCount(chunk.vo);
-  const suggested = avatarDurationFor(words, durations);
+  const seconds = speechSeconds(chunk.vo);
+  const suggested = avatarDurationFor(chunk.vo, durations);
   const duration = chunk.duration && durations.includes(chunk.duration) ? chunk.duration : suggested;
-  const tooLong = durations.length ? words / AVATAR_WORDS_PER_SECOND + 1 > Math.max(...durations) : false;
+  const tooLong = lineTooLong(chunk.vo, durations);
   const hasPrompt = (chunk.video_prompt?.trim().length ?? 0) >= MIN_AVATAR_PROMPT_CHARS;
   const busy = animating || generation?.status === "queued" || generation?.status === "processing";
   const takes = chunk.generation_ids ?? [];
@@ -83,8 +84,8 @@ export function AvatarCard({
       <div className="flex flex-wrap items-center gap-2 border-b border-hairline px-3 py-2">
         <span className="font-mono text-xs text-muted">#{index + 1}</span>
         <span className="truncate text-[12px] text-cream-2">{chunk.vo.length > 90 ? `${chunk.vo.slice(0, 90)}…` : chunk.vo}</span>
-        <span className={cn("ml-auto shrink-0 font-mono text-[11px]", tooLong ? "text-danger" : "text-muted")} title={tooLong ? "Too many words for the longest clip — shorten this line or move words to the next chunk" : `${words} words ≈ ${(words / AVATAR_WORDS_PER_SECOND).toFixed(1)}s of speech`}>
-          {words} words · {duration}s clip
+        <span className={cn("ml-auto shrink-0 font-mono text-[11px]", tooLong ? "text-danger" : "text-muted")} title={tooLong ? "Too long to say inside the longest clip — move some words to the next chunk" : `${words} words, about ${seconds.toFixed(1)}s to say at quick UGC pace`}>
+          {words} words · ~{seconds.toFixed(1)}s to say · {duration}s clip
         </span>
       </div>
 
@@ -104,7 +105,7 @@ export function AvatarCard({
                   Use suggested ({suggested}s)
                 </button>
               ) : (
-                <span className="text-[11px] text-muted">from the word count</span>
+                <span className="text-[11px] text-muted">from the speaking time</span>
               )}
             </div>
           ) : null}
