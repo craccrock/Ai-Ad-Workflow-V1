@@ -10,6 +10,9 @@ import { removeStorageObject } from "@/lib/storage";
 import type { ApiGeneration } from "@/lib/client-api";
 import type { AvatarAssembly, AvatarChunk, Board } from "@/lib/types";
 
+/** Largest file we let the assembled track be: Supabase's per-upload cap is 50 MB on the Free plan. */
+const UPLOAD_BUDGET_BYTES = 44 * 1024 * 1024;
+
 /** The release ffmpeg-static 5.3 ships; the runtime fallback downloads the very same build. */
 const FFMPEG_STATIC_RELEASE = "b6.1.1";
 
@@ -144,22 +147,35 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
     const first = await probe(bin, sources[0]);
     const width = first.width || 720;
     const height = first.height || 1280;
-    const trims: AvatarAssembly["trims"] = [];
-    const parts: string[] = [];
-    for (let i = 0; i < sources.length; i++) {
-      const src = sources[i];
-      const info = i === 0 ? first : await probe(bin, src);
-      const cut = info.hasAudio ? await tailCut(bin, src, info.duration) : info.duration;
-      trims.push({ chunk_id: ordered[i].id, cut_s: Math.round(cut * 100) / 100, source_s: Math.round(info.duration * 100) / 100 });
-      const out = path.join(dir, `part-${String(i).padStart(3, "0")}.mp4`);
-      const vf = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p`;
-      const args = info.hasAudio
-        ? ["-hide_banner", "-y", "-i", src, "-t", cut.toFixed(3), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", out]
-        : ["-hide_banner", "-y", "-i", src, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", cut.toFixed(3), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", out];
-      const r = await run(bin, args);
-      if (r.code !== 0) throw new HttpError(500, `ffmpeg failed on chunk #${i + 1}: ${lastLine(r.stderr)}`, r.stderr.slice(-600));
-      parts.push(out);
-    }
+    // Where each clip gets cut, all probed up front so the total length is known before encoding.
+    const infos = await Promise.all(sources.map((src, i) => (i === 0 ? Promise.resolve(first) : probe(bin, src))));
+    const cuts = await Promise.all(sources.map((src, i) => (infos[i].hasAudio ? tailCut(bin, src, infos[i].duration) : Promise.resolve(infos[i].duration))));
+    const trims: AvatarAssembly["trims"] = ordered.map((c, i) => ({ chunk_id: c.id, cut_s: Math.round(cuts[i] * 100) / 100, source_s: Math.round(infos[i].duration * 100) / 100 }));
+    const totalSeconds = cuts.reduce((s, c) => s + c, 0);
+
+    // Supabase caps a single upload (50 MB on the Free plan). Size the video bitrate so the whole track lands
+    // under it with headroom, capped at 8 Mbps — more than Meta keeps after its own re-encode anyway.
+    const audioKbps = 160;
+    const videoKbps = Math.max(1500, Math.min(8000, Math.floor((UPLOAD_BUDGET_BYTES * 8) / 1000 / Math.max(1, totalSeconds)) - audioKbps));
+    const vf = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p`;
+    const encode = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-maxrate", `${videoKbps}k`, "-bufsize", `${videoKbps * 2}k`, "-pix_fmt", "yuv420p"];
+    const parts = sources.map((_, i) => path.join(dir, `part-${String(i).padStart(3, "0")}.mp4`));
+
+    // Encode two clips at a time: the function has ~2 vCPUs, and each x264 run already threads.
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: 2 }, async () => {
+        while (next < sources.length) {
+          const i = next++;
+          const src = sources[i];
+          const args = infos[i].hasAudio
+            ? ["-hide_banner", "-y", "-i", src, "-t", cuts[i].toFixed(3), "-vf", vf, ...encode, "-c:a", "aac", "-b:a", `${audioKbps}k`, "-ar", "48000", "-ac", "2", "-movflags", "+faststart", parts[i]]
+            : ["-hide_banner", "-y", "-i", src, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", cuts[i].toFixed(3), "-vf", vf, ...encode, "-c:a", "aac", "-b:a", `${audioKbps}k`, "-shortest", "-movflags", "+faststart", parts[i]];
+          const r = await run(bin, args);
+          if (r.code !== 0) throw new HttpError(500, `ffmpeg failed on chunk #${i + 1}: ${lastLine(r.stderr)}`, r.stderr.slice(-600));
+        }
+      }),
+    );
 
     // 3. Concat with stream copy: every part now shares codec, size, fps and audio layout.
     const list = path.join(dir, "list.txt");
@@ -169,6 +185,7 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
     if (r.code !== 0) throw new HttpError(500, `ffmpeg failed to join the clips: ${lastLine(r.stderr)}`, r.stderr.slice(-600));
     const final = await probe(bin, out);
     const body = await readFile(out);
+    if (body.byteLength > 50 * 1024 * 1024) throw new HttpError(500, `The assembled track is ${Math.round(body.byteLength / 1048576)} MB, over the 50 MB upload cap — lower the avatar quality and assemble again`);
 
     // 4. Upload and record; drop the previous assembly file.
     const storagePath = `assemblies/${board.id}/aroll-${Date.now()}.mp4`;
