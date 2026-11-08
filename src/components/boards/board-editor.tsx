@@ -480,8 +480,10 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
       const g = gens[genId] ?? (await fetchGeneration(genId));
       setGens((cur) => ({ ...cur, [genId]: g }));
       setBeats((cur) => cur.map((b) => (b.id === beatId ? (kind === "video" ? { ...b, video_generation_id: genId } : { ...b, generation_id: genId }) : b)));
+      // Persist the choice: Reprompt, Animate and the next save read the beat from the server, not from this tab.
+      if (!beatId.startsWith("new-")) await api(`/api/boards/${initial.id}/beats/${beatId}/take`, { method: "PATCH", json: { kind, generation_id: genId } });
     } catch (e) {
-      toast.error("Couldn't load that take", { description: e instanceof Error ? e.message : String(e) });
+      toast.error("Couldn't switch take", { description: e instanceof Error ? e.message : String(e) });
     }
   }
 
@@ -625,8 +627,10 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
       const g = gens[genId] ?? (await fetchGeneration(genId));
       setGens((cur) => ({ ...cur, [genId]: g }));
       setChunks((cur) => cur.map((c) => (c.id === chunkId ? { ...c, generation_id: genId } : c)));
+      // Persist the choice: Assemble reads each chunk's current clip from the server.
+      await api(`/api/boards/${initial.id}/avatar/chunks/${chunkId}/take`, { method: "PATCH", json: { generation_id: genId } });
     } catch (e) {
-      toast.error("Couldn't load that clip", { description: e instanceof Error ? e.message : String(e) });
+      toast.error("Couldn't switch clip", { description: e instanceof Error ? e.message : String(e) });
     }
   }
 
