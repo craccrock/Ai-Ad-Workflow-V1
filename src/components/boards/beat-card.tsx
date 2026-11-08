@@ -648,7 +648,7 @@ export function BeatCard({
               <p className="mt-1 text-[10px] text-muted">Images are sent to the model in this order; refer to them in the prompt as &ldquo;image 1&rdquo;, &ldquo;image 2&rdquo;&hellip; counting only the filled slots.</p>
             </div>
           ) : (
-            <p className="text-[11px] text-muted">A-roll: the talking head says this line on camera. Its clip is made in the Avatar tab; switch to B-roll if it needs its own visual.</p>
+            <p className="text-[11px] text-muted">A-roll: no visual laid on top; she says this line in the Avatar timeline. Switch to B-roll if it needs its own shot.</p>
           )}
 
           {broll ? (

@@ -9,19 +9,21 @@ import { Segmented } from "@/components/ui/segmented";
 import { AVATAR_WORDS_PER_SECOND, avatarDurationFor, wordCount } from "@/config/avatar";
 import type { ModelConfig } from "@/config/models.config";
 import { downloadFile, type ApiGeneration } from "@/lib/client-api";
-import type { Beat } from "@/lib/types";
+import type { AvatarChunk } from "@/lib/types";
 import { cn, formatUsd } from "@/lib/utils";
-import { DirectionBox, Result, TakeNav, type BeatPatch, type ExampleImage } from "./beat-card";
+import { DirectionBox, Result, TakeNav, type ExampleImage } from "./beat-card";
 
-/** An avatar prompt shorter than this is the splitter's one-line hint, not a written prompt. */
+/** An avatar prompt shorter than this is not a written prompt yet (mirrors lib/boards-avatar). */
 export const MIN_AVATAR_PROMPT_CHARS = 200;
 
+export type ChunkPatch = Partial<Pick<AvatarChunk, "vo" | "duration" | "video_prompt">>;
+
 /**
- * One A-roll chunk in the Avatar tab: its line, clip length, the talking-head prompt, and the clip.
- * The clip is animated from the board's avatar still, so there is no per-beat image here.
+ * One chunk of the script in the Avatar tab: the line she speaks, the clip length, the talking-head prompt,
+ * and the clip. Every clip is animated from the board's avatar still, so there is no image here.
  */
 export function AvatarCard({
-  beat,
+  chunk,
   index,
   model,
   generation,
@@ -35,8 +37,7 @@ export function AvatarCard({
   onShowGeneration,
   onDeleteTake,
 }: {
-  beat: Beat;
-  /** Position in the whole board (so numbers match the Storyboard tab). */
+  chunk: AvatarChunk;
   index: number;
   model: ModelConfig;
   generation: ApiGeneration | null;
@@ -44,9 +45,9 @@ export function AvatarCard({
   avatarReady: boolean;
   userId: string;
   canEdit: boolean;
-  onPatch: (patch: BeatPatch) => void;
+  onPatch: (patch: ChunkPatch) => void;
   onAnimate: () => void;
-  onReprompt: (direction: string, attachResult: boolean, exampleUrls: string[], fresh: boolean) => Promise<{ prompt: string }>;
+  onReprompt: (direction: string, exampleUrls: string[], fresh: boolean) => Promise<void>;
   onShowGeneration: (id: string) => void;
   onDeleteTake: (id: string) => Promise<void>;
 }) {
@@ -55,18 +56,18 @@ export function AvatarCard({
   const [promptOpen, setPromptOpen] = useState(false);
 
   const durations = model.options.durations ?? [];
-  const words = wordCount(beat.vo);
+  const words = wordCount(chunk.vo);
   const suggested = avatarDurationFor(words, durations);
-  const duration = beat.video_duration && durations.includes(beat.video_duration) ? beat.video_duration : suggested;
+  const duration = chunk.duration && durations.includes(chunk.duration) ? chunk.duration : suggested;
   const tooLong = durations.length ? words / AVATAR_WORDS_PER_SECOND + 1 > Math.max(...durations) : false;
-  const hasPrompt = (beat.video_prompt?.trim().length ?? 0) >= MIN_AVATAR_PROMPT_CHARS;
-  const busy = animating || (generation?.status === "queued" || generation?.status === "processing");
-  const takes = beat.video_generation_ids ?? [];
+  const hasPrompt = (chunk.video_prompt?.trim().length ?? 0) >= MIN_AVATAR_PROMPT_CHARS;
+  const busy = animating || generation?.status === "queued" || generation?.status === "processing";
+  const takes = chunk.generation_ids ?? [];
 
-  async function submitReprompt(direction: string, attach: boolean, examples: ExampleImage[], _addToRefs: boolean, fresh: boolean) {
+  async function submitReprompt(direction: string, _attach: boolean, examples: ExampleImage[], _addToRefs: boolean, fresh: boolean) {
     setReprompting(true);
     try {
-      await onReprompt(direction, attach, examples.map((e) => e.url), fresh);
+      await onReprompt(direction, examples.map((e) => e.url), fresh);
       setRepromptOpen(false);
       setPromptOpen(true);
       toast.success("Avatar prompt ready!", { duration: 1500 });
@@ -78,11 +79,11 @@ export function AvatarCard({
   }
 
   return (
-    <article className="rounded-[8px] border border-hairline bg-surface" id={`avatar-${beat.id}`}>
+    <article className="rounded-[8px] border border-hairline bg-surface" id={`chunk-${chunk.id}`}>
       <div className="flex flex-wrap items-center gap-2 border-b border-hairline px-3 py-2">
         <span className="font-mono text-xs text-muted">#{index + 1}</span>
-        <span className="text-[11px] text-cream-2">A-roll</span>
-        <span className={cn("ml-auto font-mono text-[11px]", tooLong ? "text-danger" : "text-muted")} title={tooLong ? "Too many words for the longest clip — split this line" : `${words} words ≈ ${(words / AVATAR_WORDS_PER_SECOND).toFixed(1)}s of speech`}>
+        <span className="truncate text-[12px] text-cream-2">{chunk.vo.length > 90 ? `${chunk.vo.slice(0, 90)}…` : chunk.vo}</span>
+        <span className={cn("ml-auto shrink-0 font-mono text-[11px]", tooLong ? "text-danger" : "text-muted")} title={tooLong ? "Too many words for the longest clip — shorten this line or move words to the next chunk" : `${words} words ≈ ${(words / AVATAR_WORDS_PER_SECOND).toFixed(1)}s of speech`}>
           {words} words · {duration}s clip
         </span>
       </div>
@@ -91,19 +92,19 @@ export function AvatarCard({
         <div className="min-w-0 space-y-3">
           <div>
             <label className="mb-1 block text-[10px] font-medium uppercase tracking-[0.08em] text-cream-2">Line she speaks</label>
-            <Textarea value={beat.vo} readOnly={!canEdit} onChange={(e) => onPatch({ vo: e.target.value })} rows={2} className="font-sans text-[13px]" />
+            <Textarea value={chunk.vo} readOnly={!canEdit} onChange={(e) => onPatch({ vo: e.target.value })} rows={2} className="font-sans text-[13px]" />
           </div>
 
           {durations.length ? (
             <div className="flex flex-wrap items-center gap-3">
               <label className="text-[10px] uppercase tracking-[0.08em] text-muted">Clip length</label>
-              <Segmented size="sm" value={String(duration)} options={durations.map((d) => ({ value: String(d), label: `${d}s` }))} onChange={(v) => canEdit && onPatch({ video_duration: Number(v) })} />
-              {beat.video_duration && beat.video_duration !== suggested ? (
-                <button type="button" className="text-[11px] text-gold hover:text-cream" onClick={() => onPatch({ video_duration: null })}>
+              <Segmented size="sm" value={String(duration)} options={durations.map((d) => ({ value: String(d), label: `${d}s` }))} onChange={(v) => canEdit && onPatch({ duration: Number(v) })} />
+              {chunk.duration && chunk.duration !== suggested ? (
+                <button type="button" className="text-[11px] text-gold hover:text-cream" onClick={() => onPatch({ duration: null })}>
                   Use suggested ({suggested}s)
                 </button>
               ) : (
-                <span className="text-[11px] text-muted">auto from the word count</span>
+                <span className="text-[11px] text-muted">from the word count</span>
               )}
             </div>
           ) : null}
@@ -119,7 +120,7 @@ export function AvatarCard({
                     {reprompting ? <Loader2 className="size-3 animate-spin" /> : <Wand2 className="size-3" />} {hasPrompt ? "Reprompt" : "Write with Claude"}
                   </button>
                 ) : null}
-                {beat.video_prompt ? (
+                {chunk.video_prompt ? (
                   <button type="button" onClick={() => setPromptOpen((o) => !o)} className="text-[11px] text-cream-2 hover:text-cream">
                     {promptOpen ? "Collapse" : "Expand"}
                   </button>
@@ -132,7 +133,7 @@ export function AvatarCard({
               </div>
             ) : null}
             <Textarea
-              value={beat.video_prompt ?? ""}
+              value={chunk.video_prompt ?? ""}
               readOnly={!canEdit}
               onChange={(e) => onPatch({ video_prompt: e.target.value })}
               rows={promptOpen ? 16 : 4}
@@ -172,7 +173,7 @@ export function AvatarCard({
             {busy ? "Generating…" : generation ? "Re-roll clip" : "Generate clip"}
           </Button>
           {generation?.status === "completed" && generation.result_url ? (
-            <Button variant="ghost" size="sm" onClick={() => downloadFile(generation.result_url!, `aroll-${index + 1}.mp4`)}>
+            <Button variant="ghost" size="sm" onClick={() => downloadFile(generation.result_url!, `avatar-${String(index + 1).padStart(2, "0")}.mp4`)}>
               <Download /> Download
             </Button>
           ) : null}

@@ -1,17 +1,16 @@
 import { z } from "zod";
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { canEditBoard, getBoardForActor, loadBoardWithBeats } from "@/lib/boards";
-import { avatarStillUrl, writeAvatarPrompts } from "@/lib/boards-avatar";
-import { hasVideoPrompt } from "@/lib/boards-video";
+import { avatarStillUrl, hasAvatarPrompt, writeAvatarPrompts } from "@/lib/boards-avatar";
 
 export const maxDuration = 300;
 
 const bodySchema = z.object({
-  /** "missing" = only A-roll beats without a prompt; "all" = rewrite every A-roll beat. */
+  /** "missing" = only chunks without a prompt; "all" = rewrite every chunk. */
   mode: z.enum(["missing", "all"]).default("missing"),
 });
 
-/** POST /api/boards/:id/avatar/prompts — asks the brain to write talking-head prompts for the board's A-roll beats. */
+/** POST /api/boards/:id/avatar/prompts — asks the brain to write talking-head prompts for the board's chunks. */
 export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boardId]/avatar/prompts">) {
   return handleRoute(async () => {
     const actor = await requireActor(request);
@@ -24,9 +23,9 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
     const full = await loadBoardWithBeats(board);
     const avatarUrl = avatarStillUrl(full);
     if (!avatarUrl) throw new HttpError(422, "Add an avatar still first (or give the subject a base image)");
-    const targets = full.beats.filter((b) => b.role === "aroll" && b.vo.trim() && (parsed.data.mode === "all" || !hasVideoPrompt(b)));
-    if (!targets.length) throw new HttpError(422, parsed.data.mode === "missing" ? "Every A-roll beat already has an avatar prompt" : "No A-roll beats with a line");
-    const { prompts, usage } = await writeAvatarPrompts(board, full.subject, full.beats, targets, avatarUrl);
+    const targets = full.avatar_chunks.filter((c) => c.vo.trim() && (parsed.data.mode === "all" || !hasAvatarPrompt(c)));
+    if (!targets.length) throw new HttpError(422, parsed.data.mode === "missing" ? "Every chunk already has an avatar prompt" : "No chunks yet — chunk the script first");
+    const { prompts, usage } = await writeAvatarPrompts(board, full.subject, full.avatar_chunks, targets, avatarUrl);
     return Response.json({ prompts, usage });
   });
 }

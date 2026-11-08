@@ -11,9 +11,9 @@ import { AVATAR_MODEL_IDS, avatarDurationFor, DEFAULT_AVATAR_MODEL, wordCount } 
 import { getModel, models } from "@/config/models.config";
 import { api, type ApiGeneration, type ApiMedia } from "@/lib/client-api";
 import { estimateCost } from "@/lib/generation-params";
-import type { Beat, BoardWithBeats, Media, Profile, Subject } from "@/lib/types";
+import type { AvatarChunk, Beat, BoardWithBeats, Media, Profile, Subject } from "@/lib/types";
 import { cn, formatUsd } from "@/lib/utils";
-import { AvatarCard, MIN_AVATAR_PROMPT_CHARS } from "./avatar-card";
+import { AvatarCard, MIN_AVATAR_PROMPT_CHARS, type ChunkPatch } from "./avatar-card";
 import { BeatCard, fetchGeneration, videoModels, type BeatPatch } from "./beat-card";
 import { RefSlot } from "./ref-slot";
 import { SubjectPicker } from "./subject-picker";
@@ -89,6 +89,11 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   const [animating, setAnimating] = useState<Set<string>>(new Set());
   const [writingVideo, setWritingVideo] = useState(false);
   const [tab, setTab] = useState<"board" | "avatar">("board");
+  const [chunks, setChunks] = useState<AvatarChunk[]>(initial.avatar_chunks ?? []);
+  const chunksRef = useRef(chunks);
+  useEffect(() => {
+    chunksRef.current = chunks;
+  }, [chunks]);
   const [chunking, setChunking] = useState(false);
   const [writingAvatar, setWritingAvatar] = useState(false);
   const [runAll, setRunAll] = useState<{ total: number; done: number } | null>(null);
@@ -128,7 +133,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     },
     [avatarModel, avatarResolution],
   );
-  const avatarDurationOf = useCallback((b: Beat) => (b.video_duration && avatarDurations.includes(b.video_duration) ? b.video_duration : avatarDurationFor(wordCount(b.vo), avatarDurations)), [avatarDurations]);
+  const avatarDurationOf = useCallback((c: Pick<AvatarChunk, "vo" | "duration">) => (c.duration && avatarDurations.includes(c.duration) ? c.duration : avatarDurationFor(wordCount(c.vo), avatarDurations)), [avatarDurations]);
 
   const perImage = useMemo(() => {
     try {
@@ -465,37 +470,73 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
 
   // ─── avatar actions ───────────────────────────────────────────────────────
 
-  /** Re-cuts the A-roll narration into clip-sized beats (server-side, via Claude). Replaces the A-roll beats. */
-  async function chunkAroll() {
-    const list = await flush();
-    const aroll = list.filter((b) => b.role === "aroll" && b.vo.trim());
-    if (!aroll.length) return toast("Nothing to chunk", { description: "No A-roll beats with a line. Mark the talking-head lines as A-roll in the Storyboard tab first." });
-    const withClips = aroll.filter((b) => b.video_generation_ids?.length).length;
-    if (!window.confirm(`Re-cut the ${aroll.length} A-roll beat${aroll.length === 1 ? "" : "s"} into ${Math.max(...avatarDurations)}s-or-shorter chunks? Their avatar prompts are cleared${withClips ? ` and ${withClips} beat${withClips === 1 ? "" : "s"} lose their clips (the videos stay in the gallery)` : ""}. B-roll beats are untouched.`)) return;
+  // Chunk edits (line, length, prompt) save on a debounce, like beats.
+  const chunkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [chunkSave, setChunkSave] = useState<"saved" | "dirty" | "saving">("saved");
+  const saveChunks = useCallback(
+    async (list: AvatarChunk[]) => {
+      setChunkSave("saving");
+      try {
+        await api(`/api/boards/${initial.id}/avatar/chunks`, { method: "PUT", json: { chunks: list.map((c) => ({ id: c.id, vo: c.vo, duration: c.duration, video_prompt: c.video_prompt })) } });
+        setChunkSave("saved");
+      } catch (e) {
+        setChunkSave("dirty");
+        toast.error("Couldn't save chunks", { description: e instanceof Error ? e.message : String(e) });
+      }
+    },
+    [initial.id],
+  );
+  const updateChunks = useCallback(
+    (next: AvatarChunk[]) => {
+      setChunks(next);
+      setChunkSave("dirty");
+      if (chunkTimer.current) clearTimeout(chunkTimer.current);
+      chunkTimer.current = setTimeout(() => void saveChunks(next), SAVE_DEBOUNCE_MS);
+    },
+    [saveChunks],
+  );
+  const flushChunks = useCallback(async () => {
+    if (chunkTimer.current) {
+      clearTimeout(chunkTimer.current);
+      chunkTimer.current = null;
+      await saveChunks(chunksRef.current);
+    }
+    return chunksRef.current;
+  }, [saveChunks]);
+  const patchChunk = (id: string, patch: ChunkPatch) => updateChunks(chunks.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+
+  /** Cuts the WHOLE script into clip-sized chunks (server-side, via Claude). Replaces the current chunk list. */
+  async function chunkScript() {
+    if (!board.script.trim() && !beats.some((b) => b.vo.trim())) return toast.error("Paste the script first");
+    const withClips = chunks.filter((c) => c.generation_ids?.length).length;
+    if (chunks.length && !window.confirm(`Re-cut the script into ${Math.max(...avatarDurations)}s-or-shorter chunks? The current ${chunks.length} chunks and their prompts are replaced${withClips ? `, and ${withClips} chunk${withClips === 1 ? "" : "s"} lose their clips (the videos stay in the gallery)` : ""}. The storyboard is untouched.`)) return;
     setChunking(true);
     try {
-      const res = await api<{ beats: Beat[]; usage: { input: number; output: number } }>(`/api/boards/${initial.id}/avatar/chunk`, { method: "POST", json: {} });
-      setBeats(res.beats);
-      setSaveState("saved");
-      const n = res.beats.filter((b) => b.role === "aroll").length;
-      toast.success(`A-roll cut into ${n} chunk${n === 1 ? "" : "s"}`, { description: "Next: write the avatar prompts." });
+      if (scriptTimer.current) {
+        clearTimeout(scriptTimer.current);
+        await api(`/api/boards/${initial.id}`, { method: "PATCH", json: { script: board.script } });
+      }
+      const res = await api<{ chunks: AvatarChunk[]; usage: { input: number; output: number } }>(`/api/boards/${initial.id}/avatar/chunks`, { method: "POST", json: {} });
+      setChunks(res.chunks);
+      setChunkSave("saved");
+      toast.success(`Script cut into ${res.chunks.length} chunk${res.chunks.length === 1 ? "" : "s"}`, { description: "Next: write the avatar prompts." });
     } catch (e) {
-      toast.error("Couldn't chunk the A-roll", { description: e instanceof Error ? e.message : String(e) });
+      toast.error("Couldn't chunk the script", { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setChunking(false);
     }
   }
 
   async function writeAvatarPrompts(mode: "missing" | "all") {
-    const list = await flush();
-    const targets = list.filter((b) => b.role === "aroll" && b.vo.trim() && (mode === "all" || (b.video_prompt?.trim().length ?? 0) < MIN_AVATAR_PROMPT_CHARS));
-    if (!targets.length) return toast("Nothing to write", { description: mode === "missing" ? "Every A-roll chunk already has an avatar prompt." : "No A-roll chunks with a line." });
+    const list = await flushChunks();
+    const targets = list.filter((c) => c.vo.trim() && (mode === "all" || (c.video_prompt?.trim().length ?? 0) < MIN_AVATAR_PROMPT_CHARS));
+    if (!targets.length) return toast("Nothing to write", { description: mode === "missing" ? "Every chunk already has an avatar prompt." : "No chunks yet — chunk the script first." });
     if (!avatarReady) return toast.error("Add an avatar still first");
-    if (mode === "all" && !window.confirm(`Rewrite the avatar prompts on all ${targets.length} A-roll chunks? Edits you made by hand will be replaced.`)) return;
+    if (mode === "all" && !window.confirm(`Rewrite the avatar prompts on all ${targets.length} chunks? Edits you made by hand will be replaced.`)) return;
     setWritingAvatar(true);
     try {
       const res = await api<{ prompts: Record<string, string>; usage: { input: number; output: number } }>(`/api/boards/${initial.id}/avatar/prompts`, { method: "POST", json: { mode } });
-      setBeats((cur) => cur.map((b) => (res.prompts[b.id] ? { ...b, video_prompt: res.prompts[b.id] } : b)));
+      setChunks((cur) => cur.map((c) => (res.prompts[c.id] ? { ...c, video_prompt: res.prompts[c.id] } : c)));
       toast.success(`Avatar prompts ready for ${Object.keys(res.prompts).length} chunk${Object.keys(res.prompts).length === 1 ? "" : "s"}`, { description: `${res.usage.output.toLocaleString()} tokens` });
     } catch (e) {
       toast.error("Couldn't write avatar prompts", { description: e instanceof Error ? e.message : String(e) });
@@ -504,12 +545,45 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     }
   }
 
+  const repromptChunk = useCallback(
+    async (chunkId: string, direction: string, exampleUrls: string[], fresh: boolean) => {
+      await flushChunks();
+      const r = await api<{ video_prompt: string }>(`/api/boards/${initial.id}/avatar/chunks/${chunkId}/reprompt`, { method: "POST", json: { direction, example_urls: exampleUrls, fresh } });
+      setChunks(chunksRef.current.map((c) => (c.id === chunkId ? { ...c, video_prompt: r.video_prompt } : c)));
+    },
+    [flushChunks, initial.id],
+  );
+
+  /** Starts the talking-head clip for one chunk; resolves once the job is submitted. */
+  const animateChunk = useCallback(
+    async (chunkId: string): Promise<string | null> => {
+      await flushChunks();
+      setAnimating((s) => new Set(s).add(chunkId));
+      try {
+        const res = await api<{ chunk: AvatarChunk; generation: ApiGeneration }>(`/api/boards/${initial.id}/avatar/chunks/${chunkId}/animate`, { method: "POST", json: {} });
+        setChunks((cur) => cur.map((c) => (c.id === chunkId ? { ...c, generation_id: res.chunk.generation_id, generation_ids: res.chunk.generation_ids } : c)));
+        setGens((g) => ({ ...g, [res.generation.id]: res.generation }));
+        return res.generation.id;
+      } catch (e) {
+        toast.error("Couldn't generate the clip", { description: e instanceof Error ? e.message : String(e) });
+        return null;
+      } finally {
+        setAnimating((s) => {
+          const n = new Set(s);
+          n.delete(chunkId);
+          return n;
+        });
+      }
+    },
+    [flushChunks, initial.id],
+  );
+
   async function animateAvatarAll(mode: "missing" | "all") {
-    const list = await flush();
+    const list = await flushChunks();
     if (!avatarReady) return toast.error("Add an avatar still first");
-    const targets = list.filter((b) => b.role === "aroll" && (b.video_prompt?.trim().length ?? 0) >= MIN_AVATAR_PROMPT_CHARS && (mode === "all" || !(b.video_generation_id && gens[b.video_generation_id]?.status === "completed")));
-    if (!targets.length) return toast("Nothing to generate", { description: mode === "missing" ? "Every A-roll chunk with a prompt already has a clip." : "No A-roll chunks have an avatar prompt yet." });
-    const costs = targets.map((b) => avatarClipCost(avatarDurationOf(b)));
+    const targets = list.filter((c) => (c.video_prompt?.trim().length ?? 0) >= MIN_AVATAR_PROMPT_CHARS && (mode === "all" || !(c.generation_id && gens[c.generation_id]?.status === "completed")));
+    if (!targets.length) return toast("Nothing to generate", { description: mode === "missing" ? "Every chunk with a prompt already has a clip." : "No chunks have an avatar prompt yet." });
+    const costs = targets.map((c) => avatarClipCost(avatarDurationOf(c)));
     const cost = costs.every((c) => c != null) ? costs.reduce((s, c) => s + (c ?? 0), 0) : null;
     if (!window.confirm(`Generate ${targets.length} talking-head clip${targets.length === 1 ? "" : "s"} with ${avatarModel.name}${cost != null ? ` for about ${formatUsd(cost)}` : ""}, ${concurrency} at a time?`)) return;
     stopRef.current = false;
@@ -518,8 +592,8 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     await Promise.all(
       Array.from({ length: Math.max(1, concurrency) }, async () => {
         while (queue.length && !stopRef.current) {
-          const beat = queue.shift()!;
-          const id = await animate(beat.id);
+          const chunk = queue.shift()!;
+          const id = await animateChunk(chunk.id);
           if (id) await waitFor(id);
           setRunAll((r) => (r ? { ...r, done: r.done + 1 } : r));
         }
@@ -527,6 +601,27 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     );
     setRunAll(null);
     toast.success(stopRef.current ? "Stopped" : "Avatar clips finished");
+  }
+
+  async function showChunkGeneration(chunkId: string, genId: string) {
+    try {
+      const g = gens[genId] ?? (await fetchGeneration(genId));
+      setGens((cur) => ({ ...cur, [genId]: g }));
+      setChunks((cur) => cur.map((c) => (c.id === chunkId ? { ...c, generation_id: genId } : c)));
+    } catch (e) {
+      toast.error("Couldn't load that clip", { description: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  async function deleteChunkTake(chunkId: string, genId: string) {
+    const res = await api<{ generation_id: string | null; generation_ids: string[] }>(`/api/boards/${initial.id}/avatar/chunks/${chunkId}/takes/${genId}`, { method: "DELETE" });
+    setChunks((cur) => cur.map((c) => (c.id === chunkId ? { ...c, generation_id: res.generation_id, generation_ids: res.generation_ids } : c)));
+    setGens((cur) => {
+      const next = { ...cur };
+      delete next[genId];
+      return next;
+    });
+    toast.success("Clip deleted");
   }
 
   /** Deletes one take (image or clip) from a beat, for good. The server picks the neighbouring take as current. */
@@ -545,11 +640,11 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   const brollCount = beats.filter((b) => b.role === "broll").length;
   const doneCount = beats.filter((b) => b.role === "broll" && b.generation_id && gens[b.generation_id]?.status === "completed").length;
   const clipCount = beats.filter((b) => b.role === "broll" && b.video_generation_id && gens[b.video_generation_id]?.status === "completed").length;
-  const arollBeats = beats.map((b, i) => ({ beat: b, index: i })).filter(({ beat }) => beat.role === "aroll");
-  const avatarPromptCount = arollBeats.filter(({ beat }) => (beat.video_prompt?.trim().length ?? 0) >= MIN_AVATAR_PROMPT_CHARS).length;
-  const avatarClipCount = arollBeats.filter(({ beat }) => beat.video_generation_id && gens[beat.video_generation_id]?.status === "completed").length;
+  const avatarPromptCount = chunks.filter((c) => (c.video_prompt?.trim().length ?? 0) >= MIN_AVATAR_PROMPT_CHARS).length;
+  const avatarClipCount = chunks.filter((c) => c.generation_id && gens[c.generation_id]?.status === "completed").length;
+  const avatarTotalSeconds = chunks.reduce((s, c) => s + avatarDurationOf(c), 0);
   const avatarTotalCost = (() => {
-    const costs = arollBeats.map(({ beat }) => avatarClipCost(avatarDurationOf(beat)));
+    const costs = chunks.map((c) => avatarClipCost(avatarDurationOf(c)));
     return costs.length && costs.every((c) => c != null) ? costs.reduce((s, c) => s + (c ?? 0), 0) : null;
   })();
 
@@ -650,13 +745,18 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
             aria-label="Phase"
             options={[
               { value: "board", label: `Storyboard · ${brollCount} B-roll` },
-              { value: "avatar", label: `Avatar · ${arollBeats.length} A-roll` },
+              { value: "avatar", label: `Avatar · ${chunks.length} chunks` },
             ]}
           />
-          <span className={cn("ml-auto flex items-center gap-1 text-[11px]", saveState === "saved" ? "text-muted" : "text-gold")}>
-            {saveState === "saving" ? <Loader2 className="size-3 animate-spin" /> : saveState === "saved" ? <Check className="size-3" /> : null}
-            {saveState === "saving" ? "Saving" : saveState === "saved" ? "Saved" : "Unsaved"}
-          </span>
+          {(() => {
+            const s = tab === "avatar" ? chunkSave : saveState;
+            return (
+              <span className={cn("ml-auto flex items-center gap-1 text-[11px]", s === "saved" ? "text-muted" : "text-gold")}>
+                {s === "saving" ? <Loader2 className="size-3 animate-spin" /> : s === "saved" ? <Check className="size-3" /> : null}
+                {s === "saving" ? "Saving" : s === "saved" ? "Saved" : "Unsaved"}
+              </span>
+            );
+          })()}
         </div>
 
         {tab === "avatar" ? (
@@ -675,7 +775,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
               />
               <div className="space-y-3">
                 <p className="text-[12px] leading-snug text-cream-2">
-                  Every A-roll chunk is animated from this one still, speaking its line with generated voice. Keep the same still (same room, same framing) for the whole board so the clips cut together. A 9:16 phone-style frame with her already looking into the lens works best.
+                  Every chunk of the script is animated from this one still, speaking its line with generated voice. Keep the same still (same room, same framing) for the whole board so the clips cut together. A 9:16 phone-style frame with her already looking into the lens works best.
                 </p>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div>
@@ -705,7 +805,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
 
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-xs text-cream-2">
-                {arollBeats.length} chunks · {avatarPromptCount} prompts · {avatarClipCount} clips{avatarTotalCost != null && arollBeats.length ? ` · about ${formatUsd(avatarTotalCost)} for the full set` : ""}
+                {chunks.length} chunks{chunks.length ? ` · ${avatarTotalSeconds}s of talking head` : ""} · {avatarPromptCount} prompts · {avatarClipCount} clips{avatarTotalCost != null && chunks.length ? ` · about ${formatUsd(avatarTotalCost)} for the full set` : ""}
               </span>
               <div className="ml-auto flex flex-wrap items-center gap-2">
                 {runAll ? (
@@ -719,10 +819,10 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                   </>
                 ) : (
                   <>
-                    <Button variant="outline" size="sm" disabled={!canEdit || chunking || !arollBeats.length} onClick={() => void chunkAroll()} title={`Have Claude re-cut the A-roll lines so each fits one ${Math.max(...avatarDurations)}s-or-shorter clip`}>
-                      {chunking ? <Loader2 className="animate-spin" /> : <Scissors />} {chunking ? "Chunking…" : "Chunk A-roll"}
+                    <Button variant="outline" size="sm" disabled={!canEdit || chunking || (!board.script.trim() && !beats.length)} onClick={() => void chunkScript()} title={`Have Claude cut the whole script into pieces that each fit one ${Math.max(...avatarDurations)}s-or-shorter clip`}>
+                      {chunking ? <Loader2 className="animate-spin" /> : <Scissors />} {chunking ? "Chunking…" : chunks.length ? "Re-chunk script" : "Chunk script"}
                     </Button>
-                    <Button variant="outline" size="sm" disabled={!canEdit || writingAvatar || !arollBeats.length || !avatarReady} onClick={() => void writeAvatarPrompts("missing")} title="Write a talking-head prompt for every chunk that has none yet">
+                    <Button variant="outline" size="sm" disabled={!canEdit || writingAvatar || !chunks.length || !avatarReady} onClick={() => void writeAvatarPrompts("missing")} title="Write a talking-head prompt for every chunk that has none yet">
                       {writingAvatar ? <Loader2 className="animate-spin" /> : <Wand2 />} {writingAvatar ? "Writing…" : "Write avatar prompts"}
                     </Button>
                     <Button variant="ghost" size="sm" disabled={!canEdit || writingAvatar || !avatarPromptCount} onClick={() => void writeAvatarPrompts("all")} title="Rewrite every chunk's prompt">
@@ -740,29 +840,29 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
               </div>
             </div>
 
-            {arollBeats.length === 0 ? (
+            {chunks.length === 0 ? (
               <div className="rounded-[8px] border border-dashed border-hairline px-6 py-16 text-center">
-                <p className="font-serif text-xl text-cream">No A-roll yet</p>
-                <p className="mt-2 text-sm text-cream-2">Split the script first; the lines the talking head says on camera arrive here as A-roll. You can also flip any beat to A-roll in the Storyboard tab.</p>
+                <p className="font-serif text-xl text-cream">No chunks yet</p>
+                <p className="mt-2 text-sm text-cream-2">Press Chunk script. Claude cuts the whole script into pieces she can say in one clip, in order. The storyboard beats are untouched.</p>
               </div>
             ) : (
               <div className="space-y-4">
-                {arollBeats.map(({ beat, index }) => (
+                {chunks.map((chunk, index) => (
                   <AvatarCard
-                    key={beat.id}
-                    beat={beat}
+                    key={chunk.id}
+                    chunk={chunk}
                     index={index}
                     model={avatarModel}
-                    generation={beat.video_generation_id ? (gens[beat.video_generation_id] ?? null) : null}
-                    animating={animating.has(beat.id)}
+                    generation={chunk.generation_id ? (gens[chunk.generation_id] ?? null) : null}
+                    animating={animating.has(chunk.id)}
                     avatarReady={avatarReady}
                     userId={profile.id}
                     canEdit={canEdit}
-                    onPatch={(p) => patchBeat(beat.id, p)}
-                    onAnimate={() => void animate(beat.id)}
-                    onReprompt={(direction, attach, examples, fresh) => repromptVideo(beat.id, direction, attach, examples, fresh)}
-                    onShowGeneration={(id) => void showGeneration(beat.id, id, "video")}
-                    onDeleteTake={(id) => deleteTake(beat.id, id)}
+                    onPatch={(p) => patchChunk(chunk.id, p)}
+                    onAnimate={() => void animateChunk(chunk.id)}
+                    onReprompt={(direction, examples, fresh) => repromptChunk(chunk.id, direction, examples, fresh)}
+                    onShowGeneration={(id) => void showChunkGeneration(chunk.id, id)}
+                    onDeleteTake={(id) => deleteChunkTake(chunk.id, id)}
                   />
                 ))}
               </div>

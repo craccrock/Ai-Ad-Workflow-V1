@@ -186,10 +186,25 @@ export type Board = {
   updated_at: string;
 };
 
+/** One clip-sized piece of the script the avatar speaks. Its own list, independent of the storyboard beats. */
+export type AvatarChunk = {
+  id: string;
+  board_id: string;
+  position: number;
+  vo: string;
+  /** Clip length in seconds; null = auto from the word count. */
+  duration: number | null;
+  video_prompt: string | null;
+  generation_id: string | null;
+  generation_ids: string[];
+  created_at: string;
+};
+
 /** A board as the editor loads it: beats in order plus every media row and generation they point at. */
 export type BoardWithBeats = Board & {
   subject: Subject | null;
   beats: Beat[];
+  avatar_chunks: AvatarChunk[];
   media: Record<string, Media>;
   /** Serialized like the REST API (see serializeGeneration): `error` instead of `error_message`. */
   generations: Record<string, ApiGeneration>;

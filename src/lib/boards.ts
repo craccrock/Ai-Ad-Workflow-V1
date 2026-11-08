@@ -5,7 +5,7 @@ import { serializeGeneration } from "@/lib/generations";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSettings } from "@/lib/settings";
 import { imageBlockFromUrl } from "@/lib/vision";
-import type { Beat, BeatRole, Board, BoardWithBeats, Generation, Media, Subject } from "@/lib/types";
+import type { AvatarChunk, Beat, BeatRole, Board, BoardWithBeats, Generation, Media, Subject } from "@/lib/types";
 
 // ─── access ──────────────────────────────────────────────────────────────────
 
@@ -22,11 +22,13 @@ export function canEditBoard(actor: Actor, board: Pick<Board, "user_id">) {
 
 export async function loadBoardWithBeats(board: Board): Promise<BoardWithBeats> {
   const admin = createAdminClient();
-  const [{ data: beats }, subject] = await Promise.all([
+  const [{ data: beats }, { data: chunks }, subject] = await Promise.all([
     admin.from("beats").select("*").eq("board_id", board.id).order("position"),
+    admin.from("avatar_chunks").select("*").eq("board_id", board.id).order("position"),
     board.subject_id ? loadSubject(board.subject_id) : Promise.resolve(null),
   ]);
   const list = (beats ?? []) as Beat[];
+  const avatarChunks = (chunks ?? []) as AvatarChunk[];
   const mediaIds = new Set<string>();
   const genIds = new Set<string>();
   for (const b of list) {
@@ -36,6 +38,7 @@ export async function loadBoardWithBeats(board: Board): Promise<BoardWithBeats> 
     if (b.generation_id) genIds.add(b.generation_id);
     if (b.video_generation_id) genIds.add(b.video_generation_id);
   }
+  for (const c of avatarChunks) if (c.generation_id) genIds.add(c.generation_id);
   if (subject?.media_id) mediaIds.add(subject.media_id);
   if (board.avatar_media_id) mediaIds.add(board.avatar_media_id);
   const [{ data: media }, { data: gens }] = await Promise.all([
@@ -46,6 +49,7 @@ export async function loadBoardWithBeats(board: Board): Promise<BoardWithBeats> 
     ...board,
     subject,
     beats: list,
+    avatar_chunks: avatarChunks,
     media: Object.fromEntries(((media ?? []) as Media[]).map((m) => [m.id, m])),
     generations: Object.fromEntries(((gens ?? []) as Generation[]).map((g) => [g.id, serializeGeneration(g)])),
   };
