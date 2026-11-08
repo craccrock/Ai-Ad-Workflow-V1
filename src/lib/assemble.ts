@@ -223,6 +223,9 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
 // ─── B-roll over A-roll ───────────────────────────────────────────────────────
 
 const MIN_OVERLAY_SECONDS = 0.8;
+/** Editorial pacing: no B-roll shorter than this, and no cut back to her shorter than this. */
+const MIN_BROLL_SECONDS = 2;
+const MIN_RETURN_SECONDS = 2;
 
 /**
  * Lays each B-roll beat's clip over the A-roll track for the stretch where its line is spoken. The line is found
@@ -287,8 +290,30 @@ export async function assembleFinal(board: Board, beats: Beat[], gens: Record<st
       }),
     );
 
-    // 3. Trim each B-roll to its window (from its in-point) and normalise to the A-roll frame. Clips shorter than
-    //    the window simply end early, which cuts back to her.
+    // 3. Pace the cut like an editor would. Each clip was placed on its own line; left like that the ad flips to
+    //    B-roll for two seconds, back to her for half a second, and off again. So: a B-roll run carries through any
+    //    gap shorter than MIN_RETURN_SECONDS into the next clip (neighbouring B-roll lines become one continuous
+    //    stretch), every clip shows for at least MIN_BROLL_SECONDS, and when we do cut back to her she gets at least
+    //    MIN_RETURN_SECONDS on camera. All of it limited by how much footage each clip actually has past its in-point.
+    const clipInfos = await Promise.all(srcs.map((f) => probe(bin, f)));
+    const avail = placements.map((p, i) => Math.max(0, clipInfos[i].duration - p.in_s));
+    const lineEnd = placements.map((p) => p.end_s); // the spoken window, before pacing
+    for (let i = 0; i < placements.length; i++) {
+      const p = placements[i];
+      const nxt = placements[i + 1];
+      const limit = nxt ? nxt.start_s : info.duration;
+      let end = Math.max(lineEnd[i], p.start_s + MIN_BROLL_SECONDS);
+      if (limit - end < MIN_RETURN_SECONDS) end = limit; // too short a return to her: carry through
+      p.end_s = Math.min(end, p.start_s + avail[i], limit);
+      if (nxt && nxt.start_s - p.end_s > 0 && nxt.start_s - p.end_s < MIN_RETURN_SECONDS) {
+        // This clip ran out before the next one starts: bring the next one in early to close the gap.
+        const need = lineEnd[i + 1] - p.end_s;
+        if (need <= avail[i + 1]) nxt.start_s = p.end_s;
+        else nxt.start_s = Math.max(p.end_s, lineEnd[i + 1] - avail[i + 1]);
+      }
+    }
+
+    // Trim each B-roll to its paced window (from its in-point) and normalise to the A-roll frame.
     const vf = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p`;
     const parts: string[] = [];
     let next = 0;
@@ -297,9 +322,7 @@ export async function assembleFinal(board: Board, beats: Beat[], gens: Record<st
         while (next < srcs.length) {
           const i = next++;
           const p = placements[i];
-          const clip = await probe(bin, srcs[i]);
-          const avail = Math.max(0, clip.duration - p.in_s);
-          const dur = Math.min(p.end_s - p.start_s, avail);
+          const dur = Math.min(p.end_s - p.start_s, avail[i]);
           if (dur < MIN_OVERLAY_SECONDS) {
             p.end_s = p.start_s; // marks it empty; dropped below
             continue;

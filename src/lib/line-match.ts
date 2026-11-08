@@ -3,10 +3,31 @@ import type { TranscriptWord } from "@/lib/types";
 
 // ─── matching a line to the transcript ───────────────────────────────────────
 
+const ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
+const TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+
+/** 0–9999 as spoken words ("40" → "forty", "250" → "two hundred fifty"); anything else is left as digits. */
+function numberWords(n: number): string {
+  if (!Number.isInteger(n) || n < 0 || n > 9999) return String(n);
+  if (n < 20) return ONES[n];
+  if (n < 100) return TENS[Math.floor(n / 10)] + (n % 10 ? " " + ONES[n % 10] : "");
+  if (n < 1000) return ONES[Math.floor(n / 100)] + " hundred" + (n % 100 ? " " + numberWords(n % 100) : "");
+  return ONES[Math.floor(n / 1000)] + " thousand" + (n % 1000 ? " " + numberWords(n % 1000) : "");
+}
+
+/**
+ * Lowercase word tokens. Numbers and symbols are spelled out the way a transcript writes them ("40%" → "forty
+ * percent", "$5" → "five dollars"), so a script line and the spoken words compare like for like.
+ */
 const norm = (s: string) =>
   s
     .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[’']/g, "")
+    .replace(/\$\s*(\d[\d,]*)/g, (_, d) => d + " dollars")
+    .replace(/(\d[\d,]*)\s*%/g, (_, d) => d + " percent")
+    .replace(/\d[\d,]*/g, (d) => numberWords(Number(d.replace(/,/g, ""))))
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .split(/\s+/)
@@ -19,15 +40,24 @@ function same(a: string, b: string) {
   return false;
 }
 
-/** Fraction of `line` tokens found, in order, inside `window` (greedy subsequence match). */
+/**
+ * Fraction of `line` tokens found, in order, inside `window`. Each token is looked for within the next few
+ * transcript words only, so one word the voice changed or dropped costs one hit instead of everything after it.
+ */
 function coverage(line: string[], window: string[]) {
   let j = 0;
   let hits = 0;
   for (const t of line) {
-    while (j < window.length && !same(t, window[j])) j++;
-    if (j < window.length) {
+    let found = -1;
+    for (let k = j; k < Math.min(window.length, j + 4); k++) {
+      if (same(t, window[k])) {
+        found = k;
+        break;
+      }
+    }
+    if (found >= 0) {
       hits++;
-      j++;
+      j = found + 1;
     }
   }
   return hits / Math.max(1, line.length);
