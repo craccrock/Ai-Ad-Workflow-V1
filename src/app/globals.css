@@ -94,3 +94,17 @@ body {
 input[type="range"] {
   accent-color: var(--gold);
 }
+
+/* Native <select> popups follow the element's own color-scheme on Windows; force the dark palette so the
+   dropdown list isn't a white box on a navy page. */
+select,
+select option,
+select optgroup {
+  color-scheme: dark;
+  background-color: var(--navy-input);
+  color: var(--cream);
+}
+select option:checked,
+select option:hover {
+  background-color: var(--navy-elevated);
+}
