@@ -76,6 +76,22 @@ function newBeat(boardId: string, from?: Partial<Beat>): Beat {
   };
 }
 
+/** Progress for Generate-all / Animate-all: a bar, done/total, and how many jobs are in flight right now. */
+function RunProgress({ done, total, inFlight }: { done: number; total: number; inFlight: number }) {
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return (
+    <div className="flex items-center gap-2" title={`${done} of ${total} finished · ${inFlight} running at once`}>
+      <div className="h-1.5 w-32 overflow-hidden rounded-full bg-white/10">
+        <div className="h-full rounded-full bg-gold/80 transition-[width] duration-500" style={{ width: `${pct}%` }} />
+      </div>
+      <span className="font-mono text-xs text-cream-2">
+        {done}/{total}
+        <span className="text-muted"> · {inFlight} running</span>
+      </span>
+    </div>
+  );
+}
+
 export function BoardEditor({ initial, profile, concurrency }: { initial: BoardWithBeats; profile: Profile; concurrency: number }) {
   const canEdit = profile.role === "admin" || initial.user_id === profile.id;
   const [board, setBoard] = useState(initial);
@@ -829,9 +845,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
               <div className="ml-auto flex flex-wrap items-center gap-2">
                 {runAll ? (
                   <>
-                    <span className="font-mono text-xs text-cream-2">
-                      {runAll.done}/{runAll.total}
-                    </span>
+                    <RunProgress done={runAll.done} total={runAll.total} inFlight={Math.min(concurrency, runAll.total - runAll.done)} />
                     <Button variant="danger" size="sm" onClick={() => (stopRef.current = true)}>
                       <Square /> Stop
                     </Button>
@@ -939,9 +953,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
           <div className="ml-auto flex items-center gap-2">
             {runAll ? (
               <>
-                <span className="font-mono text-xs text-cream-2">
-                  {runAll.done}/{runAll.total}
-                </span>
+                <RunProgress done={runAll.done} total={runAll.total} inFlight={Math.min(concurrency, runAll.total - runAll.done)} />
                 <Button variant="danger" size="sm" onClick={() => (stopRef.current = true)}>
                   <Square /> Stop
                 </Button>
