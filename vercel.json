@@ -2,8 +2,5 @@
   "crons": [
     { "path": "/api/cron/sync", "schedule": "0 7 * * *" },
     { "path": "/api/cron/cleanup", "schedule": "0 8 * * *" }
-  ],
-  "functions": {
-    "src/app/api/boards/[boardId]/avatar/assemble/route.ts": { "memory": 3009, "maxDuration": 300 }
-  }
+  ]
 }
