@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Clapperboard, Loader2, Play, RotateCw, Scissors, Sparkles, Square, UserRound, Wand2 } from "lucide-react";
+import { Check, Clapperboard, Download, Film, Loader2, Play, RotateCw, Scissors, Sparkles, Square, UserRound, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -9,9 +9,9 @@ import { Input, Label, NativeSelect, Textarea } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { AVATAR_MODEL_IDS, avatarDurationFor, DEFAULT_AVATAR_MODEL, wordCount } from "@/config/avatar";
 import { getModel, models } from "@/config/models.config";
-import { api, type ApiGeneration, type ApiMedia } from "@/lib/client-api";
+import { api, downloadFile, type ApiGeneration, type ApiMedia } from "@/lib/client-api";
 import { estimateCost } from "@/lib/generation-params";
-import type { AvatarChunk, Beat, BoardWithBeats, Media, Profile, Subject } from "@/lib/types";
+import type { AvatarAssembly, AvatarChunk, Beat, BoardWithBeats, Media, Profile, Subject } from "@/lib/types";
 import { cn, formatUsd } from "@/lib/utils";
 import { AvatarCard, MIN_AVATAR_PROMPT_CHARS, type ChunkPatch } from "./avatar-card";
 import { BeatCard, fetchGeneration, videoModels, type BeatPatch } from "./beat-card";
@@ -96,6 +96,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   }, [chunks]);
   const [chunking, setChunking] = useState(false);
   const [writingAvatar, setWritingAvatar] = useState(false);
+  const [assembling, setAssembling] = useState(false);
   const [runAll, setRunAll] = useState<{ total: number; done: number } | null>(null);
   const stopRef = useRef(false);
   const beatsRef = useRef(beats);
@@ -624,6 +625,24 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     toast.success("Clip deleted");
   }
 
+  /** Joins every chunk's clip into one talking-head track (server-side ffmpeg; hard cuts, tails trimmed). */
+  async function assembleAroll() {
+    const list = await flushChunks();
+    const ready = list.filter((c) => c.generation_id && gens[c.generation_id]?.status === "completed").length;
+    if (ready < list.length) return toast.error(`${list.length - ready} chunk${list.length - ready === 1 ? " has" : "s have"} no finished clip yet`);
+    if (board.avatar_assembly && !window.confirm("Assemble again? The current A-roll track is replaced.")) return;
+    setAssembling(true);
+    try {
+      const res = await api<{ assembly: AvatarAssembly }>(`/api/boards/${initial.id}/avatar/assemble`, { method: "POST", json: {} });
+      setBoard((b) => ({ ...b, avatar_assembly: res.assembly }));
+      toast.success(`A-roll assembled · ${res.assembly.duration_s}s`, { description: `${res.assembly.chunk_ids.length} clips joined, tails trimmed.` });
+    } catch (e) {
+      toast.error("Couldn't assemble the A-roll", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setAssembling(false);
+    }
+  }
+
   /** Deletes one take (image or clip) from a beat, for good. The server picks the neighbouring take as current. */
   async function deleteTake(beatId: string, genId: string) {
     const res = await api<{ kind: "image" | "video" } & Partial<Pick<Beat, "generation_id" | "generation_ids" | "video_generation_id" | "video_generation_ids">>>(`/api/boards/${initial.id}/beats/${beatId}/takes/${genId}`, { method: "DELETE" });
@@ -835,6 +854,16 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                     <Button variant="gold" size="sm" disabled={!canEdit || !avatarPromptCount || !avatarReady} onClick={() => void animateAvatarAll("missing")}>
                       <UserRound /> Generate missing clips
                     </Button>
+                    <span className="mx-1 h-5 w-px bg-hairline" />
+                    <Button
+                      variant={board.avatar_assembly ? "outline" : "gold"}
+                      size="sm"
+                      disabled={!canEdit || assembling || !chunks.length || avatarClipCount < chunks.length}
+                      title={avatarClipCount < chunks.length ? `${chunks.length - avatarClipCount} chunk${chunks.length - avatarClipCount === 1 ? "" : "s"} still need a clip` : "Join every clip in order into one talking-head track: hard cuts, no gaps, the held pose after each line trimmed off"}
+                      onClick={() => void assembleAroll()}
+                    >
+                      {assembling ? <Loader2 className="animate-spin" /> : <Film />} {assembling ? "Assembling…" : board.avatar_assembly ? "Re-assemble A-roll" : "Assemble A-roll"}
+                    </Button>
                   </>
                 )}
               </div>
@@ -867,7 +896,38 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 ))}
               </div>
             )}
-            <p className="text-[11px] text-muted">Coming next: &ldquo;Cut together&rdquo; &mdash; Claude assembles the A-roll and B-roll clips into the finished ad with ffmpeg, so the edit stops being a manual step too.</p>
+            {board.avatar_assembly ? (
+              <div className="grid gap-4 rounded-[8px] border border-gold/40 bg-surface p-3 md:grid-cols-[220px_1fr]" id="aroll-assembly">
+                <div className="relative aspect-[9/16] overflow-hidden rounded-[6px] bg-black">
+                  <video key={board.avatar_assembly.url} src={board.avatar_assembly.url} controls playsInline preload="metadata" className="h-full w-full object-contain" />
+                </div>
+                <div className="min-w-0 space-y-2">
+                  <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.08em] text-gold">
+                    <Film className="size-3" /> A-roll track
+                  </div>
+                  <p className="text-sm text-cream">
+                    {board.avatar_assembly.duration_s}s · {board.avatar_assembly.chunk_ids.length} clips · assembled {new Date(board.avatar_assembly.created_at).toLocaleString()}
+                  </p>
+                  <p className="text-[11px] leading-snug text-cream-2">
+                    Hard cuts, no gaps. Each clip was cut right after her last word; the trims below show how much held pose came off each one. This track is what the B-roll gets laid over next.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {board.avatar_assembly.trims.map((t, i) => (
+                      <span key={t.chunk_id} className="rounded-[4px] border border-hairline px-1.5 py-0.5 font-mono text-[10px] text-muted" title={`chunk #${i + 1}: kept ${t.cut_s}s of ${t.source_s}s`}>
+                        #{i + 1} {t.cut_s}s{t.source_s - t.cut_s > 0.05 ? ` (−${(t.source_s - t.cut_s).toFixed(1)})` : ""}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <Button variant="outline" size="sm" onClick={() => void downloadFile(board.avatar_assembly!.url, `${board.title.replace(/[^\w-]+/g, "_") || "board"}-aroll.mp4`)}>
+                      <Download /> Download A-roll
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted">Once every chunk has a clip, Assemble A-roll joins them in order into one talking-head track. The B-roll overlay comes next and is laid over that track.</p>
+            )}
           </div>
         ) : (
           <>

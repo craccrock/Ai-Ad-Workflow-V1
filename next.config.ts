@@ -10,6 +10,12 @@ const storageHost = (() => {
 })();
 
 const nextConfig: NextConfig = {
+  // ffmpeg-static resolves its binary with a path join, which file tracing can't follow; pull it in for the
+  // one route that runs ffmpeg so the Lambda has it (and only that Lambda carries the ~80 MB).
+  serverExternalPackages: ["ffmpeg-static"],
+  outputFileTracingIncludes: {
+    "/api/boards/\\[boardId\\]/avatar/assemble": ["./node_modules/ffmpeg-static/ffmpeg*"],
+  },
   images: {
     // Gallery and library thumbnails are resized here instead of shipping 5–7 MB originals to every card.
     remotePatterns: [{ protocol: "https", hostname: storageHost, pathname: "/storage/v1/object/public/**" }],

@@ -181,9 +181,21 @@ export type Board = {
   avatar_media_id: string | null;
   avatar_model: string;
   avatar_resolution: string | null;
+  /** The assembled talking-head track: every chunk clip joined in order, tails trimmed. */
+  avatar_assembly: AvatarAssembly | null;
   brain_output: { subject_lock?: string; style_locks?: Record<string, string> } | null;
   created_at: string;
   updated_at: string;
+};
+
+export type AvatarAssembly = {
+  url: string;
+  path: string;
+  duration_s: number;
+  chunk_ids: string[];
+  /** Where each clip was cut (seconds into the clip) so the held pose after the line is dropped. */
+  trims: { chunk_id: string; cut_s: number; source_s: number }[];
+  created_at: string;
 };
 
 /** One clip-sized piece of the script the avatar speaks. Its own list, independent of the storyboard beats. */
