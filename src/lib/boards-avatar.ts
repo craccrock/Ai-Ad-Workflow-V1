@@ -117,10 +117,13 @@ export async function writeAvatarPrompts(
       start_from_scratch: opts.fresh || undefined,
     });
   });
-  const system = settings.board_avatar_prompt
+  const pronunciations = settings.board_pronunciations.trim() || "(none listed — still respell anything the voice is likely to get wrong)";
+  const filled = settings.board_avatar_prompt
     .replace("{{SUBJECT_LOCK}}", subjectLock)
     .replace("{{DURATIONS}}", `${durations.join(", ")} (quick UGC pace: about ${AVATAR_SYLLABLES_PER_SECOND} syllables ≈ 3.9 words per second)`)
     .replace("{{BEATS}}", `\n${lines.join("\n")}`);
+  // A custom template saved before the guide existed has no placeholder; append the block so the rule still applies.
+  const system = filled.includes("{{PRONUNCIATIONS}}") ? filled.replace("{{PRONUNCIATIONS}}", `\n${pronunciations}`) : `${filled}\n\nPRONUNCIATIONS (respell these inside the quoted line so the voice says them right; CAPITALS = stressed syllable):\n${pronunciations}`;
 
   const content: Anthropic.ContentBlockParam[] = [];
   const still = await imageBlockFromUrl(avatarUrl);

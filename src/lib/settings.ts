@@ -1,6 +1,6 @@
 import "server-only";
 import { DEFAULT_AVATAR_MODEL } from "@/config/avatar";
-import { DEFAULT_AVATAR_PROMPT } from "@/config/board-avatar-prompt";
+import { DEFAULT_AVATAR_PROMPT, DEFAULT_PRONUNCIATIONS } from "@/config/board-avatar-prompt";
 import { DEFAULT_BRAIN_PROMPT } from "@/config/board-brain-prompt";
 import { DEFAULT_VIDEO_PROMPT } from "@/config/board-video-prompt";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -23,6 +23,8 @@ export type AppSettings = {
   board_avatar_prompt: string;
   /** Talking-head video model new boards start with. */
   board_default_avatar_model: string;
+  /** One per line, "term = phonetic respelling"; the avatar writer swaps these into the spoken line so the voice model says them right. */
+  board_pronunciations: string;
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -34,6 +36,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   board_default_video_model: "kling-3-pro",
   board_avatar_prompt: DEFAULT_AVATAR_PROMPT,
   board_default_avatar_model: DEFAULT_AVATAR_MODEL,
+  board_pronunciations: DEFAULT_PRONUNCIATIONS,
 };
 
 export async function getSettings(): Promise<AppSettings> {

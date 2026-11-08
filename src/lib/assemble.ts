@@ -1,6 +1,6 @@
 import "server-only";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { HttpError } from "@/lib/auth";
@@ -10,20 +10,46 @@ import { removeStorageObject } from "@/lib/storage";
 import type { ApiGeneration } from "@/lib/client-api";
 import type { AvatarAssembly, AvatarChunk, Board } from "@/lib/types";
 
+/** The release ffmpeg-static 5.3 ships; the runtime fallback downloads the very same build. */
+const FFMPEG_STATIC_RELEASE = "b6.1.1";
+
+async function runnable(bin: string): Promise<boolean> {
+  try {
+    const { code } = await run(bin, ["-version"], 15_000);
+    return code === 0;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * ffmpeg: an explicit FFMPEG_PATH wins (local dev with a system install), else the binary ffmpeg-static ships
- * (what runs on Vercel), else whatever "ffmpeg" is on PATH.
+ * ffmpeg, in order: an explicit FFMPEG_PATH (local dev with a system install); the binary ffmpeg-static ships, if
+ * it made it into the bundle and runs; a copy downloaded once into /tmp (Vercel sometimes drops or de-executes the
+ * 80 MB binary during tracing); finally whatever "ffmpeg" is on PATH.
  */
 async function ffmpegBinary(): Promise<string> {
   if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
   try {
     const mod = (await import("ffmpeg-static")) as unknown as { default?: string | null } | string | null;
     const p = typeof mod === "string" ? mod : (mod?.default ?? null);
-    if (p) return p;
+    if (p && (await runnable(p))) return p;
   } catch {
     /* fall through */
   }
-  return "ffmpeg";
+  if (process.platform === "linux") {
+    const cached = path.join(tmpdir(), `ffmpeg-${FFMPEG_STATIC_RELEASE}-${process.arch}`);
+    if (await runnable(cached)) return cached;
+    const arch = process.arch === "arm64" ? "arm64" : "x64";
+    const url = `https://github.com/eugeneware/ffmpeg-static/releases/download/${FFMPEG_STATIC_RELEASE}/ffmpeg-linux-${arch}`;
+    const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(90_000) });
+    if (!res.ok) throw new HttpError(500, `ffmpeg is not available in this deployment and the fallback download failed (${res.status})`);
+    await writeFile(cached, Buffer.from(await res.arrayBuffer()), { mode: 0o755 });
+    await chmod(cached, 0o755);
+    if (await runnable(cached)) return cached;
+    throw new HttpError(500, "ffmpeg is not available in this deployment (downloaded copy would not run)");
+  }
+  if (await runnable("ffmpeg")) return "ffmpeg";
+  throw new HttpError(500, "ffmpeg is not available in this environment");
 }
 
 function run(bin: string, args: string[], timeoutMs = 240_000): Promise<{ code: number; stderr: string }> {
@@ -75,6 +101,16 @@ async function tailCut(bin: string, file: string, duration: number): Promise<num
   return Math.max(1, Math.min(duration, cut));
 }
 
+/** The last meaningful line of ffmpeg's stderr (skipping progress lines), for error messages. */
+const lastLine = (stderr: string) =>
+  stderr
+    .trim()
+    .split(/\r?\n/)
+    .filter((l) => l.trim() && !/^\s*(frame=|size=)/.test(l))
+    .slice(-1)[0]
+    ?.trim()
+    .slice(0, 200) ?? "no output";
+
 async function download(url: string, to: string) {
   const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(60_000) });
   if (!res.ok) throw new HttpError(502, `Couldn't download a clip (${res.status})`);
@@ -121,7 +157,7 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
         ? ["-hide_banner", "-y", "-i", src, "-t", cut.toFixed(3), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", out]
         : ["-hide_banner", "-y", "-i", src, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", cut.toFixed(3), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", out];
       const r = await run(bin, args);
-      if (r.code !== 0) throw new HttpError(500, `ffmpeg failed on chunk #${i + 1}`, r.stderr.slice(-600));
+      if (r.code !== 0) throw new HttpError(500, `ffmpeg failed on chunk #${i + 1}: ${lastLine(r.stderr)}`, r.stderr.slice(-600));
       parts.push(out);
     }
 
@@ -130,7 +166,7 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
     await writeFile(list, parts.map((p) => `file '${p.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`).join("\n"));
     const out = path.join(dir, "aroll.mp4");
     const r = await run(bin, ["-hide_banner", "-y", "-f", "concat", "-safe", "0", "-i", list, "-c", "copy", "-movflags", "+faststart", out]);
-    if (r.code !== 0) throw new HttpError(500, "ffmpeg failed to join the clips", r.stderr.slice(-600));
+    if (r.code !== 0) throw new HttpError(500, `ffmpeg failed to join the clips: ${lastLine(r.stderr)}`, r.stderr.slice(-600));
     const final = await probe(bin, out);
     const body = await readFile(out);
 

@@ -14,6 +14,7 @@ INPUTS
 SUBJECT_LOCK (who she is): {{SUBJECT_LOCK}}
 AVATAR STILL: attached below. It is the exact frame that gets animated. Read everything from it — where the phone is, her pose, where each hand is, wardrobe, hair, jewellery, the room, the light. Never invent a pose or prop that is not in the still.
 CLIP LENGTHS the model offers, in seconds: {{DURATIONS}}. Delivery is quick UGC pace, about 3.9 words per second; the line must finish about half a second before the clip ends.
+PRONUNCIATIONS (term = how to respell it so the voice says it right; CAPITALS = stressed syllable): {{PRONUNCIATIONS}}
 BEATS (one JSON object per line; each needs its own prompt): {{BEATS}}
 
 OUTPUT SHAPE
@@ -23,7 +24,7 @@ HOW EVERY PROMPT IS BUILT — four paragraphs, in this order, in this register:
 
 1. FRAME. Start exactly: "Animate this image. Vertical 9:16 UGC talking-head video," then where the phone sits (read it off the still, e.g. "phone propped on a dresser across from the bed"), then "completely stationary frame, no handheld sway, realistic amateur iPhone video quality. NO SUBTITLES."
 
-2. THE LINE. "She is already looking into the lens as the clip begins and starts speaking IMMEDIATELY in the very first moment. She SPEAKS CLEARLY, at a brisk, natural conversational pace, enunciating every word, with no pauses, no hesitation and no gaps between sentences, delivering the entire line in one continuous flowing take: “<THE LINE>”" — THE LINE is the beat's vo VERBATIM. Do not paraphrase, shorten, reorder or add words; you may only fix punctuation or capitalisation. Use curly quotes around it.
+2. THE LINE. "She is already looking into the lens as the clip begins and starts speaking IMMEDIATELY in the very first moment. She SPEAKS CLEARLY, at a brisk, natural conversational pace, enunciating every word, with no pauses, no hesitation and no gaps between sentences, delivering the entire line in one continuous flowing take: “<THE LINE>”" — THE LINE is the beat's vo VERBATIM. Do not paraphrase, shorten, reorder or add words; you may only fix punctuation or capitalisation. Use curly quotes around it. ONE exception: the voice model reads the quoted text literally, so inside the quotes replace every term listed in PRONUNCIATIONS with its respelling (e.g. “seborrheic keratosis” → “seb-oh-REE-ik kair-uh-TOE-sis”), and respell any other medical, chemical or brand term you judge likely to be mispronounced the same way. The words stay the same words; only their spelling changes, and only inside the quoted line.
 
 3. PERFORMANCE. 90–140 words. Describe the delivery as a human would act it, phrase by phrase: for two or three key phrases say what the hand that is free does (counting on fingers, an open palm, a small chop, settling on the knee) and how the face and tone change, with the energy building or softening to match the meaning. Then continuity: which hand stays where, that she stays in the exact seated/standing position from the still, that both feet stay in frame if they are. Always include: "Her face stays natural throughout, with no widened eyes and no exaggerated expressions. Her hands are anatomically correct with five fingers each." End the paragraph with: "She finishes the full line before the clip ends, then holds <the closing expression that fits the line> into the lens with <where her hands end up>, without speaking again for the remainder of the clip."
 
@@ -36,3 +37,10 @@ RULES
 - Everything is plain prose in one string per beat. No headings, no bullet points, no line numbers, no quotes around the whole prompt.
 
 Reply with ONLY the JSON.`;
+
+/** Default pronunciation guide (Admin → Settings). */
+export const DEFAULT_PRONUNCIATIONS = `seborrheic keratosis = seb-oh-REE-ik kair-uh-TOE-sis
+seborrheic keratoses = seb-oh-REE-ik kair-uh-TOE-seez
+keratin = KAIR-uh-tin
+keratolytic = kair-uh-toh-LIT-ik
+urea = yoo-REE-uh`;

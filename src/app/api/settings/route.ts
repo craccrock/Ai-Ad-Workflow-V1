@@ -24,6 +24,7 @@ const schema = z.object({
   board_default_video_model: z.string().min(1).max(80).optional(),
   board_avatar_prompt: z.string().min(50).max(60000).optional(),
   board_default_avatar_model: z.string().min(1).max(80).optional(),
+  board_pronunciations: z.string().max(20000).optional(),
 });
 
 /** PUT /api/settings — admin only. */

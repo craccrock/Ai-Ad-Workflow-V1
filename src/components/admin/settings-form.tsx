@@ -147,6 +147,14 @@ export function SettingsForm({ initial, defaultPrompt, defaultVideoPrompt, defau
         {avatarPlaceholders.length ? <p className="mt-1 text-xs text-danger">Missing placeholder{avatarPlaceholders.length > 1 ? "s" : ""}: {avatarPlaceholders.join(", ")}</p> : null}
       </div>
 
+      <div>
+        <Label>Pronunciation guide</Label>
+        <p className="mb-1.5 mt-1 text-[11px] text-muted">
+          One per line, <code className="font-mono">term = phonetic respelling</code>. The avatar writer swaps these into the spoken line (CAPITALS mark the stressed syllable) so the voice model says them right. Case-insensitive.
+        </p>
+        <Textarea value={form.board_pronunciations} onChange={(e) => setForm({ ...form, board_pronunciations: e.target.value })} rows={6} className="font-mono text-[12px] leading-relaxed" spellCheck={false} placeholder={"seborrheic keratosis = seb-oh-REE-ik kair-uh-TOE-sis"} />
+      </div>
+
       <div className="flex justify-end">
         <Button variant="gold" disabled={!dirty || saving || placeholders.length > 0 || videoPlaceholders.length > 0 || avatarPlaceholders.length > 0} onClick={save}>
           {saving ? "Saving…" : "Save settings"}
