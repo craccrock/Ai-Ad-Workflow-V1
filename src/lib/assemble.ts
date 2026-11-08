@@ -9,7 +9,7 @@ import { logLearningMany } from "@/lib/learning";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { removeStorageObject } from "@/lib/storage";
 import type { ApiGeneration } from "@/lib/client-api";
-import { locateLine } from "@/lib/transcribe";
+import { locateLine } from "@/lib/line-match";
 import type { AvatarAssembly, AvatarChunk, Beat, Board, FinalAssembly, TranscriptWord } from "@/lib/types";
 
 /** Supabase Pro allows 5 GB per upload, so quality is the only constraint: 12 Mbps 1080p is more than any ad platform keeps. */
