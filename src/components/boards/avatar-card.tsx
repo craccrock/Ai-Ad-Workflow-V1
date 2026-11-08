@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { avatarDurationFor, lineTooLong, speechSeconds, wordCount } from "@/config/avatar";
+import type { LearningTag } from "@/config/learning-tags";
 import type { ModelConfig } from "@/config/models.config";
 import { downloadFile, type ApiGeneration } from "@/lib/client-api";
 import type { AvatarChunk } from "@/lib/types";
@@ -36,6 +37,7 @@ export function AvatarCard({
   onReprompt,
   onShowGeneration,
   onDeleteTake,
+  onFeedback,
 }: {
   chunk: AvatarChunk;
   index: number;
@@ -50,6 +52,7 @@ export function AvatarCard({
   onReprompt: (direction: string, exampleUrls: string[], fresh: boolean) => Promise<void>;
   onShowGeneration: (id: string) => void;
   onDeleteTake: (id: string) => Promise<void>;
+  onFeedback: (id: string, tag: LearningTag, note: string) => Promise<void>;
 }) {
   const [repromptOpen, setRepromptOpen] = useState(false);
   const [reprompting, setReprompting] = useState(false);
@@ -162,7 +165,7 @@ export function AvatarCard({
               </a>
             ) : null}
           </div>
-          <TakeNav takes={takes} current={generation?.id ?? null} onShow={onShowGeneration} onDelete={canEdit && !busy ? onDeleteTake : undefined} label="clip" />
+          <TakeNav takes={takes} current={generation?.id ?? null} onShow={onShowGeneration} onDelete={canEdit && !busy ? onDeleteTake : undefined} onThumbsDown={canEdit ? onFeedback : undefined} label="clip" />
           <Button
             variant={generation?.status === "completed" ? "outline" : "gold"}
             size="sm"

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { beatPrompt, beatReferences, canEditBoard, getBoardForActor, loadBoardWithBeats } from "@/lib/boards";
 import { createGenerations, serializeGeneration } from "@/lib/generations";
+import { generationSnapshot, logLearning } from "@/lib/learning";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Beat } from "@/lib/types";
 
@@ -46,6 +47,10 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
     if (parsed.data.dry_run) return Response.json({ dry_run: true, model: model.id, estimate, references: refs });
 
     const gen = rows[0];
+    // A re-roll on a take the editor was looking at is a rejection of that take.
+    if (beat.generation_id) {
+      void generationSnapshot(beat.generation_id).then((snap) => logLearning({ user_id: actor.profile.id, board_id: board.id, kind: "reroll", target_type: "beat_image", target_id: beat.id, generation_id: beat.generation_id, model: snap.model, prompt: snap.prompt, meta: { vo: beat.vo, takes_before: beat.generation_ids.length } }));
+    }
     const admin = createAdminClient();
     const { data: updated, error } = await admin
       .from("beats")

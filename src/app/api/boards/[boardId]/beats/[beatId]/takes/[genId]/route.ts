@@ -1,6 +1,7 @@
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { canEditBoard, getBoardForActor } from "@/lib/boards";
 import { destroyGeneration } from "@/lib/generations";
+import { logLearning } from "@/lib/learning";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Beat } from "@/lib/types";
 
@@ -32,8 +33,11 @@ export async function DELETE(request: Request, ctx: RouteContext<"/api/boards/[b
     const { error } = await admin.from("beats").update(patch).eq("id", beatId);
     if (error) throw new HttpError(500, error.message);
 
-    const { data: gen } = await admin.from("generations").select("id, result_storage_path, result_metadata").eq("id", genId).maybeSingle();
-    if (gen) await destroyGeneration(gen as Parameters<typeof destroyGeneration>[0]);
+    const { data: gen } = await admin.from("generations").select("id, result_storage_path, result_metadata, prompt, model").eq("id", genId).maybeSingle();
+    if (gen) {
+      void logLearning({ user_id: actor.profile.id, board_id: board.id, kind: "take_delete", target_type: kind === "image" ? "beat_image" : "beat_video", target_id: beatId, generation_id: genId, model: (gen as { model?: string }).model ?? null, prompt: (gen as { prompt?: string }).prompt ?? null, meta: { takes_before: list.length } });
+      await destroyGeneration(gen as Parameters<typeof destroyGeneration>[0]);
+    }
     return Response.json({ kind, ...patch });
   });
 }

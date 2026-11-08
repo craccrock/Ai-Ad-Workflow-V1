@@ -4,6 +4,7 @@ import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { canEditBoard, getBoardForActor, loadBoardWithBeats } from "@/lib/boards";
 import { avatarSettingsFor, avatarStillUrl, hasAvatarPrompt } from "@/lib/boards-avatar";
 import { createGenerations, serializeGeneration } from "@/lib/generations";
+import { generationSnapshot, logLearning } from "@/lib/learning";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { AvatarChunk } from "@/lib/types";
 
@@ -56,6 +57,9 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
     if (parsed.data.dry_run) return Response.json({ dry_run: true, model: settings.model, settings, estimate });
 
     const gen = rows[0];
+    if (chunk.generation_id) {
+      void generationSnapshot(chunk.generation_id).then((snap) => logLearning({ user_id: actor.profile.id, board_id: board.id, kind: "reroll", target_type: "chunk", target_id: chunk.id, generation_id: chunk.generation_id, model: snap.model, prompt: snap.prompt, meta: { vo: chunk.vo, takes_before: chunk.generation_ids?.length ?? 0 } }));
+    }
     const admin = createAdminClient();
     const { data: updated, error } = await admin
       .from("avatar_chunks")

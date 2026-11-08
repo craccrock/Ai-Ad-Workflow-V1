@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Label, NativeSelect, Textarea } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { AVATAR_MODEL_IDS, avatarDurationFor, DEFAULT_AVATAR_MODEL } from "@/config/avatar";
+import type { LearningTag } from "@/config/learning-tags";
 import { getModel, models } from "@/config/models.config";
 import { api, downloadFile, type ApiGeneration, type ApiMedia } from "@/lib/client-api";
 import { estimateCost } from "@/lib/generation-params";
@@ -634,6 +635,11 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     }
   }
 
+  /** Thumbs-down with a reason: a learning event against the prompt that made the take. Nothing is changed. */
+  async function feedback(target_type: "beat_image" | "beat_video" | "chunk", target_id: string, generation_id: string, tag: LearningTag, note: string) {
+    await api(`/api/boards/${initial.id}/feedback`, { method: "POST", json: { target_type, target_id, generation_id, tag, note: note || undefined } });
+  }
+
   async function deleteChunkTake(chunkId: string, genId: string) {
     const res = await api<{ generation_id: string | null; generation_ids: string[] }>(`/api/boards/${initial.id}/avatar/chunks/${chunkId}/takes/${genId}`, { method: "DELETE" });
     setChunks((cur) => cur.map((c) => (c.id === chunkId ? { ...c, generation_id: res.generation_id, generation_ids: res.generation_ids } : c)));
@@ -910,6 +916,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                     onReprompt={(direction, examples, fresh) => repromptChunk(chunk.id, direction, examples, fresh)}
                     onShowGeneration={(id) => void showChunkGeneration(chunk.id, id)}
                     onDeleteTake={(id) => deleteChunkTake(chunk.id, id)}
+                    onFeedback={(id, tag, note) => feedback("chunk", chunk.id, id, tag, note)}
                   />
                 ))}
               </div>
@@ -1026,6 +1033,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 onRepromptVideo={(direction, attach, examples, fresh) => repromptVideo(beat.id, direction, attach, examples, fresh)}
                 onShowVideoGeneration={(id) => void showGeneration(beat.id, id, "video")}
                 onDeleteTake={(id) => deleteTake(beat.id, id)}
+                onFeedback={(kind, id, tag, note) => feedback(kind === "image" ? "beat_image" : "beat_video", beat.id, id, tag, note)}
               />
             ))}
           </div>

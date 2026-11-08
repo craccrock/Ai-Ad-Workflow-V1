@@ -2,6 +2,7 @@ import { z } from "zod";
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { canEditBoard, getBoardForActor, loadBoardWithBeats } from "@/lib/boards";
 import { avatarStillUrl, writeAvatarPrompts } from "@/lib/boards-avatar";
+import { logLearning } from "@/lib/learning";
 
 export const maxDuration = 120;
 
@@ -31,6 +32,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
     const { prompts, usage } = await writeAvatarPrompts(board, full.subject, full.avatar_chunks, [chunk], avatarUrl, { direction: parsed.data.direction, exampleUrls: parsed.data.example_urls, fresh: parsed.data.fresh });
     const video_prompt = prompts[chunk.id];
     if (!video_prompt) throw new HttpError(502, "The brain returned no avatar prompt");
+    void logLearning({ user_id: actor.profile.id, board_id: board.id, kind: "reprompt", target_type: "chunk", target_id: chunk.id, generation_id: chunk.generation_id, model: board.avatar_model, prompt: chunk.video_prompt, after_prompt: video_prompt, direction: parsed.data.direction, meta: { vo: chunk.vo, examples: parsed.data.example_urls.length, fresh: parsed.data.fresh } });
     return Response.json({ video_prompt, usage });
   });
 }

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { canEditBoard, getBoardForActor } from "@/lib/boards";
+import { generationSnapshot, logLearning } from "@/lib/learning";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Beat } from "@/lib/types";
 
@@ -31,6 +32,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/boards/[bo
     const patch = parsed.data.kind === "image" ? { generation_id: parsed.data.generation_id } : { video_generation_id: parsed.data.generation_id };
     const { error } = await admin.from("beats").update(patch).eq("id", beatId);
     if (error) throw new HttpError(500, error.message);
+    void generationSnapshot(parsed.data.generation_id).then((snap) => logLearning({ user_id: actor.profile.id, board_id: board.id, kind: "take_select", target_type: parsed.data.kind === "image" ? "beat_image" : "beat_video", target_id: beatId, generation_id: parsed.data.generation_id, model: snap.model, prompt: snap.prompt, meta: { position: list.indexOf(parsed.data.generation_id) + 1, takes: list.length } }));
     return Response.json(patch);
   });
 }

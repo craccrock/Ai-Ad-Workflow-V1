@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { canEditBoard, getBoardForActor } from "@/lib/boards";
+import { generationSnapshot, logLearning } from "@/lib/learning";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { AvatarChunk } from "@/lib/types";
 
@@ -23,6 +24,7 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/boards/[bo
     if (!c.generation_ids.includes(parsed.data.generation_id)) throw new HttpError(404, "That clip is not on this chunk");
     const { error } = await admin.from("avatar_chunks").update({ generation_id: parsed.data.generation_id }).eq("id", chunkId);
     if (error) throw new HttpError(500, error.message);
+    void generationSnapshot(parsed.data.generation_id).then((snap) => logLearning({ user_id: actor.profile.id, board_id: board.id, kind: "take_select", target_type: "chunk", target_id: chunkId, generation_id: parsed.data.generation_id, model: snap.model, prompt: snap.prompt, meta: { position: c.generation_ids.indexOf(parsed.data.generation_id) + 1, takes: c.generation_ids.length } }));
     return Response.json({ generation_id: parsed.data.generation_id });
   });
 }

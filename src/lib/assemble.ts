@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { HttpError } from "@/lib/auth";
 import { IMMUTABLE_CACHE } from "@/lib/cache";
+import { logLearningMany } from "@/lib/learning";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { removeStorageObject } from "@/lib/storage";
 import type { ApiGeneration } from "@/lib/client-api";
@@ -197,7 +198,20 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
     if (board.avatar_assembly?.path && board.avatar_assembly.path !== storagePath) await removeStorageObject("generations", board.avatar_assembly.path).catch(() => {});
     const { error: upErr } = await admin.from("boards").update({ avatar_assembly: assembly, updated_at: new Date().toISOString() }).eq("id", board.id);
     if (upErr) throw new HttpError(500, upErr.message);
-    void userId;
+    // Every clip that made the cut is a keeper: its prompt produced something the editor shipped.
+    void logLearningMany(
+      ordered.map((c, i) => ({
+        user_id: userId,
+        board_id: board.id,
+        kind: "keeper" as const,
+        target_type: "chunk" as const,
+        target_id: c.id,
+        generation_id: c.generation_id,
+        model: gens[c.generation_id!].model ?? null,
+        prompt: c.video_prompt,
+        meta: { vo: c.vo, duration: c.duration, cut_s: trims[i].cut_s, source_s: trims[i].source_s, assembly: storagePath },
+      })),
+    );
     return assembly;
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});

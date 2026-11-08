@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Clapperboard, Download, ExternalLink, FolderOpen, ImagePlus, Loader2, Merge, Plus, RotateCw, Scissors, Sparkles, Trash2, TriangleAlert, Upload, Wand2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Clapperboard, Download, ExternalLink, FolderOpen, ImagePlus, Loader2, Merge, Plus, RotateCw, Scissors, Sparkles, ThumbsDown, Trash2, TriangleAlert, Upload, Wand2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { LibraryPicker } from "@/components/library/library-picker";
@@ -10,6 +10,7 @@ import { NativeSelect, Textarea } from "@/components/ui/input";
 import { Badge } from "@/components/ui/misc";
 import { Segmented } from "@/components/ui/segmented";
 import { ImageThumb } from "@/components/ui/thumb";
+import { LEARNING_TAGS, type LearningTag } from "@/config/learning-tags";
 import { getModel, models } from "@/config/models.config";
 import { api, downloadFile, type ApiGeneration, type ApiMedia } from "@/lib/client-api";
 import { describeFailure, describeInFlight } from "@/lib/job-status";
@@ -331,12 +332,46 @@ function SplitDialogBody({ vo, onSplit, onOpenChange }: { vo: string; onSplit: (
 }
 
 /** Prev/next through a beat's takes, plus a trash button that asks before deleting the one on screen for good. */
-export function TakeNav({ takes, current, onShow, onDelete, label }: { takes: string[]; current: string | null; onShow: (id: string) => void; onDelete?: (id: string) => Promise<void>; label: string }) {
+export function TakeNav({
+  takes,
+  current,
+  onShow,
+  onDelete,
+  onThumbsDown,
+  label,
+}: {
+  takes: string[];
+  current: string | null;
+  onShow: (id: string) => void;
+  onDelete?: (id: string) => Promise<void>;
+  /** Mark the current take as bad, with a reason. Pure learning signal: nothing is deleted. */
+  onThumbsDown?: (id: string, tag: LearningTag, note: string) => Promise<void>;
+  label: string;
+}) {
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [flagging, setFlagging] = useState(false);
+  const [tag, setTag] = useState<LearningTag>("other");
+  const [note, setNote] = useState("");
+  const [sending, setSending] = useState(false);
   const i = current ? takes.indexOf(current) : -1;
   const canDelete = Boolean(onDelete) && i >= 0;
-  if (takes.length < 2 && !canDelete) return null;
+  const canFlag = Boolean(onThumbsDown) && i >= 0;
+  if (takes.length < 2 && !canDelete && !canFlag) return null;
+  const sendFlag = async () => {
+    if (!onThumbsDown || !current) return;
+    setSending(true);
+    try {
+      await onThumbsDown(current, tag, note.trim());
+      setFlagging(false);
+      setNote("");
+      toast.success("Noted", { description: "Logged as a bad take so the writers learn from it.", duration: 2000 });
+    } catch (e) {
+      toast.error("Couldn't log that", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setSending(false);
+    }
+  };
   const confirmDelete = async () => {
     if (!onDelete || !current) return;
     setDeleting(true);
@@ -356,6 +391,11 @@ export function TakeNav({ takes, current, onShow, onDelete, label }: { takes: st
       </button>
       <span className="flex items-center gap-1.5 font-mono">
         {label} {i + 1}/{takes.length}
+        {canFlag ? (
+          <button type="button" onClick={() => setFlagging(true)} className="rounded p-0.5 text-muted hover:text-gold" title={`Mark this ${label} as bad (with a reason) — it stays, the system learns`} aria-label={`Thumbs down this ${label}`}>
+            <ThumbsDown className="size-3.5" />
+          </button>
+        ) : null}
         {canDelete ? (
           <button type="button" onClick={() => setConfirming(true)} className="rounded p-0.5 text-muted hover:text-danger" title={`Delete this ${label}`} aria-label={`Delete this ${label}`}>
             <Trash2 className="size-3.5" />
@@ -375,6 +415,30 @@ export function TakeNav({ takes, current, onShow, onDelete, label }: { takes: st
               <Button variant="danger" size="sm" disabled={deleting} onClick={() => void confirmDelete()}>
                 {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />} Delete {label}
               </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      ) : null}
+      {canFlag ? (
+        <Dialog open={flagging} onOpenChange={(o) => !sending && setFlagging(o)}>
+          <DialogContent title={`What's wrong with ${label} ${i + 1}?`} description="Nothing is deleted. The reason is logged against the prompt that made it, so the writers stop making the same mistake.">
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-1.5">
+                {LEARNING_TAGS.map((t) => (
+                  <button key={t.value} type="button" onClick={() => setTag(t.value)} className={cn("rounded-[6px] border px-2 py-1 text-[11px]", tag === t.value ? "border-gold bg-gold/10 text-gold" : "border-hairline text-cream-2 hover:text-cream")}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Optional: one line on what you saw (e.g. six fingers on the left hand, zoom went the wrong way)" className="font-sans text-[12px]" />
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" size="sm" disabled={sending} onClick={() => setFlagging(false)}>
+                  Cancel
+                </Button>
+                <Button variant="gold" size="sm" disabled={sending} onClick={() => void sendFlag()}>
+                  {sending ? <Loader2 className="animate-spin" /> : <ThumbsDown />} Log it
+                </Button>
+              </div>
             </div>
           </DialogContent>
         </Dialog>
@@ -410,6 +474,7 @@ export function BeatCard({
   onRepromptVideo,
   onShowVideoGeneration,
   onDeleteTake,
+  onFeedback,
 }: {
   beat: Beat;
   index: number;
@@ -441,6 +506,8 @@ export function BeatCard({
   onShowVideoGeneration: (id: string) => void;
   /** Deletes a take or clip for good (TakeNav asks first). */
   onDeleteTake: (id: string) => Promise<void>;
+  /** Thumbs-down on a take (image) or clip (video) with a reason tag. */
+  onFeedback: (kind: "image" | "video", id: string, tag: LearningTag, note: string) => Promise<void>;
 }) {
   const [splitOpen, setSplitOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -723,7 +790,7 @@ export function BeatCard({
               </a>
             ) : null}
           </div>
-          <TakeNav takes={takes} current={generation?.id ?? null} onShow={onShowGeneration} onDelete={canEdit && !busy ? onDeleteTake : undefined} label="take" />
+          <TakeNav takes={takes} current={generation?.id ?? null} onShow={onShowGeneration} onDelete={canEdit && !busy ? onDeleteTake : undefined} onThumbsDown={canEdit ? (id, tag, note) => onFeedback("image", id, tag, note) : undefined} label="take" />
           {broll ? (
             <Button variant={generation?.status === "completed" ? "outline" : "gold"} size="sm" disabled={!canEdit || busy || !beat.image_prompt.trim()} onClick={onGenerate}>
               {busy ? <Loader2 className="animate-spin" /> : generation ? <RotateCw /> : <Sparkles />}
@@ -750,7 +817,7 @@ export function BeatCard({
                   </a>
                 ) : null}
               </div>
-              <TakeNav takes={videoTakes} current={videoGeneration?.id ?? null} onShow={onShowVideoGeneration} onDelete={canEdit && !videoBusy ? onDeleteTake : undefined} label="clip" />
+              <TakeNav takes={videoTakes} current={videoGeneration?.id ?? null} onShow={onShowVideoGeneration} onDelete={canEdit && !videoBusy ? onDeleteTake : undefined} onThumbsDown={canEdit ? (id, tag, note) => onFeedback("video", id, tag, note) : undefined} label="clip" />
               <Button
                 variant={videoGeneration?.status === "completed" ? "outline" : "gold"}
                 size="sm"

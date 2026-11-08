@@ -4,6 +4,7 @@ import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { canEditBoard, getBoardForActor, loadBoardWithBeats } from "@/lib/boards";
 import { videoSettingsFor } from "@/lib/boards-video";
 import { createGenerations, serializeGeneration } from "@/lib/generations";
+import { generationSnapshot, logLearning } from "@/lib/learning";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Beat } from "@/lib/types";
 
@@ -56,6 +57,9 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
     if (parsed.data.dry_run) return Response.json({ dry_run: true, model: settings.model, settings, estimate });
 
     const gen = rows[0];
+    if (beat.video_generation_id) {
+      void generationSnapshot(beat.video_generation_id).then((snap) => logLearning({ user_id: actor.profile.id, board_id: board.id, kind: "reroll", target_type: "beat_video", target_id: beat.id, generation_id: beat.video_generation_id, model: snap.model, prompt: snap.prompt, meta: { vo: beat.vo, takes_before: beat.video_generation_ids?.length ?? 0 } }));
+    }
     const admin = createAdminClient();
     const { data: updated, error } = await admin
       .from("beats")

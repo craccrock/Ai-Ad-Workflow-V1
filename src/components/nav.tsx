@@ -19,6 +19,7 @@ export function Nav({ profile }: { profile: Profile }) {
           { href: "/admin", label: "Spend" },
           { href: "/admin/team", label: "Team & API" },
           { href: "/admin/settings", label: "Settings" },
+          { href: "/admin/learnings", label: "Learnings" },
         ]
       : []),
   ];

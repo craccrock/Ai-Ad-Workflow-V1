@@ -2,6 +2,7 @@ import { z } from "zod";
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { beatReferences, canEditBoard, getBoardForActor, loadBoardWithBeats, repromptBeat } from "@/lib/boards";
 import { writeVideoPrompts } from "@/lib/boards-video";
+import { logLearning } from "@/lib/learning";
 
 export const maxDuration = 120;
 
@@ -31,13 +32,17 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
     if (!beat) throw new HttpError(404, "Beat not found");
     const still = beat.generation_id ? full.generations[beat.generation_id] : null;
     const stillUrl = still?.status === "completed" && still.result_url ? still.result_url : null;
+    const common = { user_id: actor.profile.id, board_id: board.id, target_id: beat.id, direction: parsed.data.direction, meta: { vo: beat.vo, examples: parsed.data.example_urls.length, fresh: parsed.data.fresh, result_attached: parsed.data.attach_result && Boolean(stillUrl) } };
     if (parsed.data.target === "video") {
       const { prompts, usage } = await writeVideoPrompts(board, full.subject, [beat], parsed.data.direction, parsed.data.attach_result && stillUrl ? { [beat.id]: stillUrl } : {}, parsed.data.example_urls, parsed.data.fresh);
       const video_prompt = prompts[beat.id];
       if (!video_prompt) throw new HttpError(502, "The brain returned no video prompt");
+      void logLearning({ ...common, kind: "reprompt", target_type: "beat_video", generation_id: beat.video_generation_id, prompt: beat.video_prompt, after_prompt: video_prompt });
       return Response.json({ video_prompt, usage });
     }
     const refs = beatReferences(beat, full.subject, full.media);
-    return Response.json(await repromptBeat(board, full.subject, beat, parsed.data.direction, refs, { resultUrl: parsed.data.attach_result ? stillUrl : null, exampleUrls: parsed.data.example_urls, fresh: parsed.data.fresh }));
+    const result = await repromptBeat(board, full.subject, beat, parsed.data.direction, refs, { resultUrl: parsed.data.attach_result ? stillUrl : null, exampleUrls: parsed.data.example_urls, fresh: parsed.data.fresh });
+    void logLearning({ ...common, kind: "reprompt", target_type: "beat_image", generation_id: parsed.data.attach_result ? beat.generation_id : null, prompt: beat.image_prompt, after_prompt: result.image_prompt, note: result.diagnosis ?? null, model: board.model });
+    return Response.json(result);
   });
 }
