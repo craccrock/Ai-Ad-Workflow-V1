@@ -696,7 +696,7 @@ export const models: ModelConfig[] = [
     requiresPrompt: true,
     pricing: { unit: "per_second", rates: { "768P": cr(8), "2K": cr(13) }, perInputImage: cr(4) },
     options: {
-      durations: [6, 10, 15],
+      durations: [4, 5, 6, 7, 8, 10, 12, 15], // Kie accepts any whole second from 4 to 15
       defaultDuration: 6,
       resolutions: ["768P", "2K"],
       defaultResolution: "768P",
