@@ -475,3 +475,15 @@ export function serializeGeneration(g: GenerationWithUser | Generation) {
     completed_at: g.completed_at,
   };
 }
+
+/** Removes a generation for good: its library entry, stored output files and the row itself. Spend history for the row is lost. */
+export async function destroyGeneration(row: Pick<Generation, "id" | "result_storage_path" | "result_metadata">) {
+  const { removeStorageObject } = await import("@/lib/storage");
+  const admin = createAdminClient();
+  await admin.from("media").delete().eq("generation_id", row.id);
+  await removeStorageObject("generations", row.result_storage_path);
+  const extraPaths = (row.result_metadata as { additional_storage_paths?: string[] } | null)?.additional_storage_paths ?? [];
+  for (const path of extraPaths) await removeStorageObject("generations", path);
+  const { error } = await admin.from("generations").delete().eq("id", row.id);
+  if (error) throw new HttpError(500, error.message);
+}

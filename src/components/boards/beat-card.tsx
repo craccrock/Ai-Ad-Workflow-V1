@@ -330,20 +330,55 @@ function SplitDialogBody({ vo, onSplit, onOpenChange }: { vo: string; onSplit: (
   );
 }
 
-function TakeNav({ takes, current, onShow, label }: { takes: string[]; current: string | null; onShow: (id: string) => void; label: string }) {
-  if (takes.length < 2) return null;
+/** Prev/next through a beat's takes, plus a trash button that asks before deleting the one on screen for good. */
+function TakeNav({ takes, current, onShow, onDelete, label }: { takes: string[]; current: string | null; onShow: (id: string) => void; onDelete?: (id: string) => Promise<void>; label: string }) {
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const i = current ? takes.indexOf(current) : -1;
+  const canDelete = Boolean(onDelete) && i >= 0;
+  if (takes.length < 2 && !canDelete) return null;
+  const confirmDelete = async () => {
+    if (!onDelete || !current) return;
+    setDeleting(true);
+    try {
+      await onDelete(current);
+      setConfirming(false);
+    } catch (e) {
+      toast.error(`Couldn't delete the ${label}`, { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setDeleting(false);
+    }
+  };
   return (
     <div className="flex items-center justify-between text-[11px] text-cream-2">
       <button type="button" disabled={i <= 0} onClick={() => onShow(takes[i - 1])} className="rounded p-1 hover:text-cream disabled:opacity-30" aria-label={`Previous ${label}`}>
         <ChevronLeft className="size-4" />
       </button>
-      <span className="font-mono">
+      <span className="flex items-center gap-1.5 font-mono">
         {label} {i + 1}/{takes.length}
+        {canDelete ? (
+          <button type="button" onClick={() => setConfirming(true)} className="rounded p-0.5 text-muted hover:text-danger" title={`Delete this ${label}`} aria-label={`Delete this ${label}`}>
+            <Trash2 className="size-3.5" />
+          </button>
+        ) : null}
       </span>
       <button type="button" disabled={i < 0 || i >= takes.length - 1} onClick={() => onShow(takes[i + 1])} className="rounded p-1 hover:text-cream disabled:opacity-30" aria-label={`Next ${label}`}>
         <ChevronRight className="size-4" />
       </button>
+      {canDelete ? (
+        <Dialog open={confirming} onOpenChange={(o) => !deleting && setConfirming(o)}>
+          <DialogContent title={`Delete ${label} ${i + 1} of ${takes.length}?`} description={`The ${label === "clip" ? "video" : "image"} file is removed for good. This can't be undone.`}>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" disabled={deleting} onClick={() => setConfirming(false)}>
+                Keep it
+              </Button>
+              <Button variant="danger" size="sm" disabled={deleting} onClick={() => void confirmDelete()}>
+                {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />} Delete {label}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </div>
   );
 }
@@ -374,6 +409,7 @@ export function BeatCard({
   onAnimate,
   onRepromptVideo,
   onShowVideoGeneration,
+  onDeleteTake,
 }: {
   beat: Beat;
   index: number;
@@ -403,6 +439,8 @@ export function BeatCard({
   onAnimate: () => void;
   onRepromptVideo: (direction: string, attachResult: boolean, exampleUrls: string[], fresh: boolean) => Promise<{ prompt: string; diagnosis?: string }>;
   onShowVideoGeneration: (id: string) => void;
+  /** Deletes a take or clip for good (TakeNav asks first). */
+  onDeleteTake: (id: string) => Promise<void>;
 }) {
   const [splitOpen, setSplitOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -685,7 +723,7 @@ export function BeatCard({
               </a>
             ) : null}
           </div>
-          <TakeNav takes={takes} current={generation?.id ?? null} onShow={onShowGeneration} label="take" />
+          <TakeNav takes={takes} current={generation?.id ?? null} onShow={onShowGeneration} onDelete={canEdit && !busy ? onDeleteTake : undefined} label="take" />
           {broll ? (
             <Button variant={generation?.status === "completed" ? "outline" : "gold"} size="sm" disabled={!canEdit || busy || !beat.image_prompt.trim()} onClick={onGenerate}>
               {busy ? <Loader2 className="animate-spin" /> : generation ? <RotateCw /> : <Sparkles />}
@@ -712,7 +750,7 @@ export function BeatCard({
                   </a>
                 ) : null}
               </div>
-              <TakeNav takes={videoTakes} current={videoGeneration?.id ?? null} onShow={onShowVideoGeneration} label="clip" />
+              <TakeNav takes={videoTakes} current={videoGeneration?.id ?? null} onShow={onShowVideoGeneration} onDelete={canEdit && !videoBusy ? onDeleteTake : undefined} label="clip" />
               <Button
                 variant={videoGeneration?.status === "completed" ? "outline" : "gold"}
                 size="sm"

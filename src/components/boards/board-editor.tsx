@@ -435,6 +435,19 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     }
   }
 
+  /** Deletes one take (image or clip) from a beat, for good. The server picks the neighbouring take as current. */
+  async function deleteTake(beatId: string, genId: string) {
+    const res = await api<{ kind: "image" | "video" } & Partial<Pick<Beat, "generation_id" | "generation_ids" | "video_generation_id" | "video_generation_ids">>>(`/api/boards/${initial.id}/beats/${beatId}/takes/${genId}`, { method: "DELETE" });
+    const { kind, ...patch } = res;
+    setBeats((cur) => cur.map((b) => (b.id === beatId ? { ...b, ...patch } : b)));
+    setGens((cur) => {
+      const next = { ...cur };
+      delete next[genId];
+      return next;
+    });
+    toast.success(kind === "image" ? "Take deleted" : "Clip deleted");
+  }
+
   const brollCount = beats.filter((b) => b.role === "broll").length;
   const doneCount = beats.filter((b) => b.role === "broll" && b.generation_id && gens[b.generation_id]?.status === "completed").length;
   const clipCount = beats.filter((b) => b.role === "broll" && b.video_generation_id && gens[b.video_generation_id]?.status === "completed").length;
@@ -611,6 +624,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 onAnimate={() => void animate(beat.id)}
                 onRepromptVideo={(direction, attach, examples, fresh) => repromptVideo(beat.id, direction, attach, examples, fresh)}
                 onShowVideoGeneration={(id) => void showGeneration(beat.id, id, "video")}
+                onDeleteTake={(id) => deleteTake(beat.id, id)}
               />
             ))}
           </div>
