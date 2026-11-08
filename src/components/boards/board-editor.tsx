@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Clapperboard, Download, Film, Loader2, Play, RotateCw, Scissors, Sparkles, Square, UserRound, Wand2 } from "lucide-react";
+import { Check, Clapperboard, Download, Film, Layers, Loader2, Play, RotateCw, Scissors, Sparkles, Square, UserRound, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -12,7 +12,7 @@ import type { LearningTag } from "@/config/learning-tags";
 import { getModel, models } from "@/config/models.config";
 import { api, downloadFile, type ApiGeneration, type ApiMedia } from "@/lib/client-api";
 import { estimateCost } from "@/lib/generation-params";
-import type { AvatarAssembly, AvatarChunk, Beat, BoardWithBeats, Media, Profile, Subject } from "@/lib/types";
+import type { AvatarAssembly, AvatarChunk, Beat, BoardWithBeats, FinalAssembly, Media, Profile, Subject } from "@/lib/types";
 import { cn, formatUsd } from "@/lib/utils";
 import { AvatarCard, MIN_AVATAR_PROMPT_CHARS, type ChunkPatch } from "./avatar-card";
 import { BeatCard, fetchGeneration, videoModels, type BeatPatch } from "./beat-card";
@@ -45,6 +45,9 @@ function toPayload(beats: Beat[]) {
     video_model: b.video_model ?? null,
     video_duration: b.video_duration ?? null,
     video_resolution: b.video_resolution ?? null,
+    overlay_enabled: b.overlay_enabled ?? true,
+    overlay_in: Number(b.overlay_in ?? 0),
+    overlay_max: b.overlay_max == null ? null : Number(b.overlay_max),
   }));
 }
 
@@ -70,6 +73,9 @@ function newBeat(boardId: string, from?: Partial<Beat>): Beat {
     video_model: null,
     video_duration: null,
     video_resolution: null,
+    overlay_enabled: true,
+    overlay_in: 0,
+    overlay_max: null,
     video_generation_id: null,
     video_generation_ids: [],
     created_at: new Date().toISOString(),
@@ -114,6 +120,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   const [chunking, setChunking] = useState(false);
   const [writingAvatar, setWritingAvatar] = useState(false);
   const [assembling, setAssembling] = useState(false);
+  const [assemblingFinal, setAssemblingFinal] = useState(false);
   const [runAll, setRunAll] = useState<{ total: number; done: number } | null>(null);
   const stopRef = useRef(false);
   const beatsRef = useRef(beats);
@@ -169,7 +176,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     try {
       const res = await api<{ beats: Beat[]; media: Record<string, Media> }>(`/api/boards/${initial.id}/beats`, { method: "PUT", json: { beats: toPayload(list) } });
       // The server assigns real ids to new beats; keep local edits made meanwhile by position.
-      setBeats((cur) => (cur.length === res.beats.length ? cur.map((b, i) => ({ ...res.beats[i], vo: b.vo, image_prompt: b.image_prompt, role: b.role, use_subject_lock: b.use_subject_lock, pose_media_id: b.pose_media_id, setting_media_id: b.setting_media_id, extra_media_ids: b.extra_media_ids, video_prompt: b.video_prompt, video_model: b.video_model, video_duration: b.video_duration, video_resolution: b.video_resolution })) : res.beats));
+      setBeats((cur) => (cur.length === res.beats.length ? cur.map((b, i) => ({ ...res.beats[i], vo: b.vo, image_prompt: b.image_prompt, role: b.role, use_subject_lock: b.use_subject_lock, pose_media_id: b.pose_media_id, setting_media_id: b.setting_media_id, extra_media_ids: b.extra_media_ids, video_prompt: b.video_prompt, video_model: b.video_model, video_duration: b.video_duration, video_resolution: b.video_resolution, overlay_enabled: b.overlay_enabled, overlay_in: b.overlay_in, overlay_max: b.overlay_max })) : res.beats));
       setMedia((m) => ({ ...m, ...res.media }));
       setSaveState("saved");
     } catch (e) {
@@ -669,6 +676,26 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     }
   }
 
+  /** Lays the B-roll clips over the A-roll track where their lines are spoken (transcribes the track once). */
+  async function assembleFinal() {
+    await flush();
+    if (!board.avatar_assembly) return toast.error("Assemble the A-roll first");
+    const ready = beats.filter((b) => b.role === "broll" && b.overlay_enabled !== false && b.video_generation_id && gens[b.video_generation_id]?.status === "completed").length;
+    if (!ready) return toast.error("No B-roll clips to lay over yet");
+    const needsTranscript = !board.avatar_assembly.words?.length;
+    if (!window.confirm(`Cut ${ready} B-roll clip${ready === 1 ? "" : "s"} over the A-roll?${needsTranscript ? " The A-roll is transcribed first (ElevenLabs Scribe, a few cents)." : ""}${board.final_assembly ? " The current finished ad is replaced." : ""}`)) return;
+    setAssemblingFinal(true);
+    try {
+      const res = await api<{ assembly: FinalAssembly; avatar_assembly: AvatarAssembly }>(`/api/boards/${initial.id}/assemble-final`, { method: "POST", json: {} });
+      setBoard((b) => ({ ...b, final_assembly: res.assembly, avatar_assembly: res.avatar_assembly }));
+      toast.success(`Finished ad · ${res.assembly.duration_s}s`, { description: `${res.assembly.placements.length} B-roll clip${res.assembly.placements.length === 1 ? "" : "s"} placed${res.assembly.skipped.length ? `, ${res.assembly.skipped.length} skipped` : ""}.` });
+    } catch (e) {
+      toast.error("Couldn't cut the B-roll in", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setAssemblingFinal(false);
+    }
+  }
+
   /** Deletes one take (image or clip) from a beat, for good. The server picks the neighbouring take as current. */
   async function deleteTake(beatId: string, genId: string) {
     const res = await api<{ kind: "image" | "video" } & Partial<Pick<Beat, "generation_id" | "generation_ids" | "video_generation_id" | "video_generation_ids">>>(`/api/boards/${initial.id}/beats/${beatId}/takes/${genId}`, { method: "DELETE" });
@@ -685,6 +712,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   const brollCount = beats.filter((b) => b.role === "broll").length;
   const doneCount = beats.filter((b) => b.role === "broll" && b.generation_id && gens[b.generation_id]?.status === "completed").length;
   const clipCount = beats.filter((b) => b.role === "broll" && b.video_generation_id && gens[b.video_generation_id]?.status === "completed").length;
+  const brollClipCount = beats.filter((b) => b.role === "broll" && b.overlay_enabled !== false && b.video_generation_id && gens[b.video_generation_id]?.status === "completed").length;
   const avatarPromptCount = chunks.filter((c) => (c.video_prompt?.trim().length ?? 0) >= MIN_AVATAR_PROMPT_CHARS).length;
   const avatarClipCount = chunks.filter((c) => c.generation_id && gens[c.generation_id]?.status === "completed").length;
   const avatarTotalSeconds = chunks.reduce((s, c) => s + avatarDurationOf(c), 0);
@@ -951,8 +979,62 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 </div>
               </div>
             ) : (
-              <p className="text-[11px] text-muted">Once every chunk has a clip, Assemble A-roll joins them in order into one talking-head track. The B-roll overlay comes next and is laid over that track.</p>
+              <p className="text-[11px] text-muted">Once every chunk has a clip, Assemble A-roll joins them in order into one talking-head track. The B-roll is then laid over that track.</p>
             )}
+
+            {board.avatar_assembly ? (
+              <div className="rounded-[8px] border border-hairline bg-surface p-3" id="final-assembly">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.08em] text-cream-2">
+                    <Layers className="size-3" /> Finished ad
+                  </div>
+                  <span className="text-[11px] text-muted">
+                    {brollClipCount} B-roll clip{brollClipCount === 1 ? "" : "s"} ready of {brollCount}
+                    {board.avatar_assembly.words?.length ? " · A-roll transcribed" : " · A-roll not transcribed yet"}
+                  </span>
+                  <Button variant={board.final_assembly ? "outline" : "gold"} size="sm" className="ml-auto" disabled={!canEdit || assemblingFinal || !brollClipCount} onClick={() => void assembleFinal()} title="Lay every B-roll clip over the A-roll where its line is spoken. Clips shorter than their line cut back to her; beats without a clip are skipped.">
+                    {assemblingFinal ? <Loader2 className="animate-spin" /> : <Layers />} {assemblingFinal ? "Cutting…" : board.final_assembly ? "Re-cut B-roll in" : "Cut B-roll in"}
+                  </Button>
+                </div>
+                {board.final_assembly ? (
+                  <div className="mt-3 grid gap-4 md:grid-cols-[220px_1fr]">
+                    <div className="relative aspect-[9/16] overflow-hidden rounded-[6px] bg-black">
+                      <video key={board.final_assembly.url} src={board.final_assembly.url} controls playsInline preload="metadata" className="h-full w-full object-contain" />
+                    </div>
+                    <div className="min-w-0 space-y-2">
+                      <p className="text-sm text-cream">
+                        {board.final_assembly.duration_s}s · {board.final_assembly.placements.length} B-roll placed{board.final_assembly.skipped.length ? ` · ${board.final_assembly.skipped.length} skipped` : ""} · {new Date(board.final_assembly.created_at).toLocaleString()}
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {board.final_assembly.placements.map((pl) => {
+                          const idx = beats.findIndex((b) => b.id === pl.beat_id);
+                          return (
+                            <span key={pl.beat_id} className="rounded-[4px] border border-hairline px-1.5 py-0.5 font-mono text-[10px] text-muted" title={`beat #${idx + 1}: ${pl.start_s}s to ${pl.end_s}s (from ${pl.in_s}s into the clip, line match ${Math.round(pl.score * 100)}%)`}>
+                              #{idx + 1} {pl.start_s}–{pl.end_s}s
+                            </span>
+                          );
+                        })}
+                        {board.final_assembly.skipped.map((sk) => {
+                          const idx = beats.findIndex((b) => b.id === sk.beat_id);
+                          return (
+                            <span key={sk.beat_id} className="rounded-[4px] border border-danger/40 px-1.5 py-0.5 font-mono text-[10px] text-danger" title={sk.reason}>
+                              #{idx + 1} skipped
+                            </span>
+                          );
+                        })}
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <Button variant="outline" size="sm" onClick={() => void downloadFile(board.final_assembly!.url, `${board.title.replace(/[^\w-]+/g, "_") || "board"}-final.mp4`)}>
+                          <Download /> Download finished ad
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-[11px] text-muted">Each B-roll beat&apos;s line is found in the A-roll transcript and its clip is laid over exactly that stretch, her audio underneath. Set a start point or a cap per beat in the Storyboard tab if a clip&apos;s best part isn&apos;t at the top.</p>
+                )}
+              </div>
+            ) : null}
           </div>
         ) : (
           <>

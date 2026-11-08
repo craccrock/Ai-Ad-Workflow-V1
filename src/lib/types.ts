@@ -159,6 +159,10 @@ export type Beat = {
   video_model: string | null;
   video_duration: number | null;
   video_resolution: string | null;
+  /** B-roll overlay: include this beat, where in its clip to start, and how long to show at most. */
+  overlay_enabled: boolean;
+  overlay_in: number;
+  overlay_max: number | null;
   video_generation_id: string | null;
   video_generation_ids: string[];
   created_at: string;
@@ -183,6 +187,7 @@ export type Board = {
   avatar_resolution: string | null;
   /** The assembled talking-head track: every chunk clip joined in order, tails trimmed. */
   avatar_assembly: AvatarAssembly | null;
+  final_assembly: FinalAssembly | null;
   brain_output: { subject_lock?: string; style_locks?: Record<string, string> } | null;
   created_at: string;
   updated_at: string;
@@ -195,6 +200,20 @@ export type AvatarAssembly = {
   chunk_ids: string[];
   /** Where each clip was cut (seconds into the clip) so the held pose after the line is dropped. */
   trims: { chunk_id: string; cut_s: number; source_s: number }[];
+  /** Word timestamps from speech-to-text on this track (cached; the overlay and captions use them). */
+  words?: TranscriptWord[];
+  created_at: string;
+};
+
+export type TranscriptWord = { text: string; start: number; end: number };
+
+/** The finished ad: B-roll laid over the A-roll track. */
+export type FinalAssembly = {
+  url: string;
+  path: string;
+  duration_s: number;
+  placements: { beat_id: string; generation_id: string; start_s: number; end_s: number; in_s: number; score: number }[];
+  skipped: { beat_id: string; reason: string }[];
   created_at: string;
 };
 

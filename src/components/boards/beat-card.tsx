@@ -19,7 +19,7 @@ import { ACCEPT, uploadMedia } from "@/lib/upload";
 import { cn, formatUsd } from "@/lib/utils";
 import { RefSlot } from "./ref-slot";
 
-export type BeatPatch = Partial<Pick<Beat, "role" | "vo" | "image_prompt" | "video_prompt" | "video_model" | "video_duration" | "video_resolution" | "use_subject_lock" | "pose_media_id" | "setting_media_id" | "extra_media_ids" | "negative_prompt" | "shot_type" | "style">>;
+export type BeatPatch = Partial<Pick<Beat, "role" | "vo" | "image_prompt" | "video_prompt" | "video_model" | "video_duration" | "video_resolution" | "use_subject_lock" | "pose_media_id" | "setting_media_id" | "extra_media_ids" | "negative_prompt" | "shot_type" | "style" | "overlay_enabled" | "overlay_in" | "overlay_max">>;
 
 /** The board's defaults for the video phase, shown as the fallback in each card. */
 export type VideoDefaults = { model: string; duration: number; resolution: string | null };
@@ -832,6 +832,24 @@ export function BeatCard({
                 <Button variant="ghost" size="sm" onClick={() => downloadFile(videoGeneration.result_url!, `beat-${index + 1}.mp4`)}>
                   <Download /> Download
                 </Button>
+              ) : null}
+              {videoGeneration?.status === "completed" ? (
+                <div className="mt-1 space-y-1.5 rounded-[6px] border border-hairline bg-field/40 p-2" title="How this clip is laid over the A-roll in the finished ad">
+                  <label className="flex items-center gap-2 text-[11px] text-cream-2">
+                    <input type="checkbox" checked={beat.overlay_enabled !== false} disabled={!canEdit} onChange={(e) => onPatch({ overlay_enabled: e.target.checked })} className="accent-gold" />
+                    Lay over the A-roll
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-[10px] uppercase tracking-[0.08em] text-muted">
+                      Start at (s)
+                      <input type="number" min={0} step={0.5} value={beat.overlay_in ?? 0} disabled={!canEdit} onChange={(e) => onPatch({ overlay_in: Math.max(0, Number(e.target.value) || 0) })} className="mt-0.5 h-7 w-full rounded-[4px] border border-input-border bg-field px-1.5 font-mono text-[11px] text-cream" />
+                    </label>
+                    <label className="text-[10px] uppercase tracking-[0.08em] text-muted">
+                      Show for (s)
+                      <input type="number" min={0.5} step={0.5} placeholder="line" value={beat.overlay_max ?? ""} disabled={!canEdit} onChange={(e) => onPatch({ overlay_max: e.target.value === "" ? null : Math.max(0.5, Number(e.target.value) || 0.5) })} className="mt-0.5 h-7 w-full rounded-[4px] border border-input-border bg-field px-1.5 font-mono text-[11px] text-cream" />
+                    </label>
+                  </div>
+                </div>
               ) : null}
               {videoGeneration?.cost_usd != null ? <span className="text-center font-mono text-[10px] text-muted">{formatUsd(videoGeneration.cost_usd)}</span> : null}
             </>

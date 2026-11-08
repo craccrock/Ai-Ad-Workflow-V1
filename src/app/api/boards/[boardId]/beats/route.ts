@@ -22,6 +22,9 @@ const beatSchema = z.object({
   video_model: z.string().max(80).nullable().optional(),
   video_duration: z.number().int().min(1).max(60).nullable().optional(),
   video_resolution: z.string().max(20).nullable().optional(),
+  overlay_enabled: z.boolean().optional(),
+  overlay_in: z.number().min(0).max(120).optional(),
+  overlay_max: z.number().min(0.5).max(120).nullable().optional(),
 });
 
 const putSchema = z.object({ beats: z.array(beatSchema).max(200) });
@@ -66,6 +69,9 @@ export async function PUT(request: Request, ctx: RouteContext<"/api/boards/[boar
         video_model: b.video_model ?? null,
         video_duration: b.video_duration ?? null,
         video_resolution: b.video_resolution ?? null,
+        overlay_enabled: b.overlay_enabled ?? true,
+        overlay_in: b.overlay_in ?? 0,
+        overlay_max: b.overlay_max ?? null,
       };
     });
 

@@ -9,7 +9,8 @@ import { logLearningMany } from "@/lib/learning";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { removeStorageObject } from "@/lib/storage";
 import type { ApiGeneration } from "@/lib/client-api";
-import type { AvatarAssembly, AvatarChunk, Board } from "@/lib/types";
+import { locateLine } from "@/lib/transcribe";
+import type { AvatarAssembly, AvatarChunk, Beat, Board, FinalAssembly, TranscriptWord } from "@/lib/types";
 
 /** Supabase Pro allows 5 GB per upload, so quality is the only constraint: 12 Mbps 1080p is more than any ad platform keeps. */
 const MAX_VIDEO_KBPS = 12000;
@@ -211,6 +212,161 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
         model: gens[c.generation_id!].model ?? null,
         prompt: c.video_prompt,
         meta: { vo: c.vo, duration: c.duration, cut_s: trims[i].cut_s, source_s: trims[i].source_s, assembly: storagePath },
+      })),
+    );
+    return assembly;
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+// ─── B-roll over A-roll ───────────────────────────────────────────────────────
+
+const MIN_OVERLAY_SECONDS = 0.8;
+
+/**
+ * Lays each B-roll beat's clip over the A-roll track for the stretch where its line is spoken. The line is found
+ * in the track's word timestamps; the B-roll is trimmed from its in-point to that window (or its own length, or
+ * the beat's cap, whichever is shortest), so a short clip cuts back to her early. Her audio runs underneath
+ * untouched. Beats without a clip, with the overlay turned off, or whose line can't be found are skipped and listed.
+ */
+export async function assembleFinal(board: Board, beats: Beat[], gens: Record<string, ApiGeneration>, words: TranscriptWord[], userId: string): Promise<FinalAssembly> {
+  const track = board.avatar_assembly;
+  if (!track?.url) throw new HttpError(422, "Assemble the A-roll first");
+  if (!words.length) throw new HttpError(422, "The A-roll track has no transcript yet");
+
+  // 1. Decide where each B-roll beat goes, walking the script in order.
+  type Placement = FinalAssembly["placements"][number] & { url: string };
+  const placements: Placement[] = [];
+  const skipped: FinalAssembly["skipped"] = [];
+  let cursor = 0;
+  let lastEnd = 0;
+  for (const b of [...beats].sort((a, c) => a.position - c.position)) {
+    if (b.role !== "broll") continue;
+    if (b.overlay_enabled === false) {
+      skipped.push({ beat_id: b.id, reason: "overlay turned off" });
+      continue;
+    }
+    const g = b.video_generation_id ? gens[b.video_generation_id] : null;
+    if (!g || g.status !== "completed" || !g.result_url) {
+      skipped.push({ beat_id: b.id, reason: "no finished clip" });
+      continue;
+    }
+    const hit = locateLine(b.vo, words, cursor);
+    if (!hit) {
+      skipped.push({ beat_id: b.id, reason: "line not found in the A-roll" });
+      continue;
+    }
+    cursor = hit.endIdx + 1;
+    const start = Math.max(hit.start, lastEnd); // never overlap the previous overlay
+    let end = hit.end;
+    if (b.overlay_max && Number(b.overlay_max) > 0) end = Math.min(end, start + Number(b.overlay_max));
+    if (end - start < MIN_OVERLAY_SECONDS) {
+      skipped.push({ beat_id: b.id, reason: "window shorter than 0.8 s" });
+      continue;
+    }
+    placements.push({ beat_id: b.id, generation_id: g.id, start_s: start, end_s: end, in_s: Number(b.overlay_in) || 0, score: Math.round(hit.score * 100) / 100, url: g.result_url });
+    lastEnd = end;
+  }
+  if (!placements.length) throw new HttpError(422, `Nothing to lay over: ${skipped.map((s) => s.reason).filter((v, i, a) => a.indexOf(v) === i).join("; ") || "no B-roll beats"}`);
+
+  const bin = await ffmpegBinary();
+  const dir = await mkdtemp(path.join(tmpdir(), "final-"));
+  try {
+    // 2. Download the A-roll and every placed clip.
+    const base = path.join(dir, "aroll.mp4");
+    await download(track.url, base);
+    const info = await probe(bin, base);
+    const width = info.width || 720;
+    const height = info.height || 1280;
+    const srcs = await Promise.all(
+      placements.map(async (p, i) => {
+        const f = path.join(dir, `b-${String(i).padStart(3, "0")}.mp4`);
+        await download(p.url, f);
+        return f;
+      }),
+    );
+
+    // 3. Trim each B-roll to its window (from its in-point) and normalise to the A-roll frame. Clips shorter than
+    //    the window simply end early, which cuts back to her.
+    const vf = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p`;
+    const parts: string[] = [];
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: 2 }, async () => {
+        while (next < srcs.length) {
+          const i = next++;
+          const p = placements[i];
+          const clip = await probe(bin, srcs[i]);
+          const avail = Math.max(0, clip.duration - p.in_s);
+          const dur = Math.min(p.end_s - p.start_s, avail);
+          if (dur < MIN_OVERLAY_SECONDS) {
+            p.end_s = p.start_s; // marks it empty; dropped below
+            continue;
+          }
+          p.end_s = p.start_s + dur;
+          const out = path.join(dir, `p-${String(i).padStart(3, "0")}.mp4`);
+          const r = await run(bin, ["-hide_banner", "-y", "-ss", p.in_s.toFixed(3), "-i", srcs[i], "-t", dur.toFixed(3), "-an", "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", out]);
+          if (r.code !== 0) throw new HttpError(500, `ffmpeg failed trimming B-roll #${i + 1}: ${lastLine(r.stderr)}`, r.stderr.slice(-600));
+          parts[i] = out;
+        }
+      }),
+    );
+    const live = placements.map((p, i) => ({ p, part: parts[i] })).filter(({ p, part }) => part && p.end_s > p.start_s);
+    for (const p of placements) if (p.end_s <= p.start_s) skipped.push({ beat_id: p.beat_id, reason: "clip too short after its in-point" });
+    if (!live.length) throw new HttpError(422, "Every B-roll clip was too short after its in-point");
+
+    // 4. One ffmpeg pass: shift each B-roll to its start time and overlay it for its window; keep the A-roll audio.
+    const inputs = ["-i", base];
+    for (const { part } of live) inputs.push("-i", part);
+    let chain = "[0:v]";
+    const filters: string[] = [];
+    live.forEach(({ p }, i) => {
+      filters.push(`[${i + 1}:v]setpts=PTS-STARTPTS+${p.start_s.toFixed(3)}/TB[b${i}]`);
+      const out = i === live.length - 1 ? "[vout]" : `[v${i}]`;
+      filters.push(`${chain}[b${i}]overlay=0:0:eof_action=pass:enable='between(t,${p.start_s.toFixed(3)},${p.end_s.toFixed(3)})'${out}`);
+      chain = out;
+    });
+    const out = path.join(dir, "final.mp4");
+    const r = await run(
+      bin,
+      ["-hide_banner", "-y", ...inputs, "-filter_complex", filters.join(";"), "-map", "[vout]", "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-maxrate", `${MAX_VIDEO_KBPS}k`, "-bufsize", `${MAX_VIDEO_KBPS * 2}k`, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out],
+      280_000,
+    );
+    if (r.code !== 0) throw new HttpError(500, `ffmpeg failed laying the B-roll: ${lastLine(r.stderr)}`, r.stderr.slice(-600));
+    const final = await probe(bin, out);
+    const body = await readFile(out);
+    if (body.byteLength > UPLOAD_CAP_BYTES) throw new HttpError(500, `The finished ad is ${Math.round(body.byteLength / 1048576)} MB, over the storage upload cap`);
+
+    // 5. Upload, record, and log every placed B-roll clip as a keeper.
+    const storagePath = `assemblies/${board.id}/final-${Date.now()}.mp4`;
+    const admin = createAdminClient();
+    const { error } = await admin.storage.from("generations").upload(storagePath, body, { contentType: "video/mp4", upsert: true, cacheControl: IMMUTABLE_CACHE });
+    if (error) throw new HttpError(500, `Storage upload failed: ${error.message}`);
+    const { data } = admin.storage.from("generations").getPublicUrl(storagePath);
+    const assembly: FinalAssembly = {
+      url: data.publicUrl,
+      path: storagePath,
+      duration_s: Math.round(final.duration * 10) / 10,
+      placements: live.map(({ p }) => ({ beat_id: p.beat_id, generation_id: p.generation_id, start_s: Math.round(p.start_s * 100) / 100, end_s: Math.round(p.end_s * 100) / 100, in_s: p.in_s, score: p.score })),
+      skipped,
+      created_at: new Date().toISOString(),
+    };
+    if (board.final_assembly?.path && board.final_assembly.path !== storagePath) await removeStorageObject("generations", board.final_assembly.path).catch(() => {});
+    const { error: upErr } = await admin.from("boards").update({ final_assembly: assembly, updated_at: new Date().toISOString() }).eq("id", board.id);
+    if (upErr) throw new HttpError(500, upErr.message);
+    const byId = new Map(beats.map((b) => [b.id, b]));
+    void logLearningMany(
+      live.map(({ p }) => ({
+        user_id: userId,
+        board_id: board.id,
+        kind: "keeper" as const,
+        target_type: "beat_video" as const,
+        target_id: p.beat_id,
+        generation_id: p.generation_id,
+        model: gens[p.generation_id]?.model ?? null,
+        prompt: byId.get(p.beat_id)?.video_prompt ?? null,
+        meta: { vo: byId.get(p.beat_id)?.vo, start_s: p.start_s, end_s: p.end_s, in_s: p.in_s, assembly: storagePath },
       })),
     );
     return assembly;
