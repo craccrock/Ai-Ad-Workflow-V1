@@ -60,13 +60,12 @@ export async function chunkScript(board: Board, beatLines: string[]): Promise<{ 
 
   const source = board.script.trim() || beatLines.map((l) => l.trim()).filter(Boolean).join("\n\n");
   if (!source) throw new HttpError(422, "Paste the script first");
-  const paragraphs = source.split(/\n\s*\n/).map((p) => p.replace(/\s+/g, " ").trim()).filter(Boolean);
-
+  // Line and paragraph breaks in the script are layout, not pauses: the whole script is one stream of sentences,
+  // packed into as few clips as will fit, so two short lines on separate lines still share one 10 s clip.
+  const stream = source.replace(/\s+/g, " ").trim();
   const rows: Omit<AvatarChunk, "id" | "created_at">[] = [];
-  for (const paragraph of paragraphs) {
-    for (const vo of packParagraph(paragraph, durations)) {
-      rows.push({ board_id: board.id, position: rows.length, vo, duration: avatarDurationFor(vo, durations), video_prompt: null, generation_id: null, generation_ids: [] });
-    }
+  for (const vo of packParagraph(stream, durations)) {
+    rows.push({ board_id: board.id, position: rows.length, vo, duration: avatarDurationFor(vo, durations), video_prompt: null, generation_id: null, generation_ids: [] });
   }
   if (!rows.length) throw new HttpError(422, "Nothing to chunk");
 
