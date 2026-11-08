@@ -32,7 +32,7 @@ export const hasVideoPrompt = (b: Pick<Beat, "video_prompt">) => (b.video_prompt
  * Writes (or rewrites) video prompts for the given beats in one Claude call. `direction` is an optional
  * editor note applied to every beat in the batch (single-beat "reprompt" passes one beat + its direction).
  */
-export async function writeVideoPrompts(board: Board, subject: Subject | null, beats: Beat[], direction?: string, stills: Record<string, string> = {}, exampleUrls: string[] = []): Promise<{ prompts: Record<string, string>; usage: { input: number; output: number } }> {
+export async function writeVideoPrompts(board: Board, subject: Subject | null, beats: Beat[], direction?: string, stills: Record<string, string> = {}, exampleUrls: string[] = [], fresh = false): Promise<{ prompts: Record<string, string>; usage: { input: number; output: number } }> {
   if (!process.env.ANTHROPIC_API_KEY) throw new HttpError(503, "ANTHROPIC_API_KEY is not set — add it to the environment to write video prompts");
   if (!beats.length) throw new HttpError(400, "No beats to write video prompts for");
 
@@ -47,9 +47,10 @@ export async function writeVideoPrompts(board: Board, subject: Subject | null, b
       role: b.role,
       style: b.style,
       image_prompt: b.image_prompt,
-      current_video_prompt: b.video_prompt || undefined,
+      current_video_prompt: fresh ? undefined : b.video_prompt || undefined,
       has_starter_image_attached: Boolean(stills[b.id]) || undefined,
       direction: direction?.trim() || undefined,
+      start_from_scratch: fresh || undefined,
     }),
   );
   const system = settings.board_video_prompt

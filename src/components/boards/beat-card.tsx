@@ -127,12 +127,13 @@ function DirectionBox({
   /** Offer "also add these to the beat's reference images" (image prompts only). */
   allowAddToRefs?: boolean;
   onClose: () => void;
-  onSubmit: (direction: string, attach: boolean, examples: ExampleImage[], addToRefs: boolean) => Promise<void>;
+  onSubmit: (direction: string, attach: boolean, examples: ExampleImage[], addToRefs: boolean, fresh: boolean) => Promise<void>;
 }) {
   const [direction, setDirection] = useState("");
   const [attach, setAttach] = useState(true);
   const [examples, setExamples] = useState<ExampleImage[]>([]);
   const [addToRefs, setAddToRefs] = useState(false);
+  const [fresh, setFresh] = useState(false);
   const [picker, setPicker] = useState(false);
   const [uploading, setUploading] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -162,10 +163,11 @@ function DirectionBox({
   const send = async () => {
     const d = direction.trim();
     if (!d || busy || uploading) return;
-    await onSubmit(d, Boolean(attachment) && attach, examples, allowAddToRefs === true && addToRefs && examples.some((e) => e.media));
+    await onSubmit(d, Boolean(attachment) && attach, examples, allowAddToRefs === true && addToRefs && examples.some((e) => e.media), fresh);
     setDirection("");
     setExamples([]);
     setAddToRefs(false);
+    setFresh(false);
   };
   return (
     <div
@@ -251,6 +253,12 @@ function DirectionBox({
           <span>{attachment.label}</span>
         </label>
       ) : null}
+      <label className="mt-2 flex cursor-pointer items-start gap-2 text-[11px] text-cream-2" title="Claude ignores the current prompt, the brain's edit note and the board's subject for this beat, and writes a new prompt from the voiceover, your direction and the attached references only.">
+        <input type="checkbox" checked={fresh} disabled={busy} onChange={(e) => setFresh(e.target.checked)} className="mt-0.5 accent-gold" />
+        <span>
+          <span className="font-medium text-cream">Start from scratch</span> &mdash; forget the current prompt and the board subject; write only from the voiceover, my direction and the references
+        </span>
+      </label>
       <div className="mt-1.5 flex items-center justify-between">
         <span className="text-[10px] text-muted">Enter to send · Shift+Enter for a new line</span>
         <div className="flex gap-2">
@@ -389,11 +397,11 @@ export function BeatCard({
   onDelete: () => void;
   onGenerate: () => void;
   /** Ask the brain to rewrite the image prompt; resolves with the new prompt. */
-  onReprompt: (direction: string, attachResult: boolean, exampleUrls: string[]) => Promise<{ prompt: string; diagnosis?: string }>;
+  onReprompt: (direction: string, attachResult: boolean, exampleUrls: string[], fresh: boolean) => Promise<{ prompt: string; diagnosis?: string }>;
   /** Step through earlier takes; the editor fetches the generation and swaps it in. */
   onShowGeneration: (id: string) => void;
   onAnimate: () => void;
-  onRepromptVideo: (direction: string, attachResult: boolean, exampleUrls: string[]) => Promise<{ prompt: string; diagnosis?: string }>;
+  onRepromptVideo: (direction: string, attachResult: boolean, exampleUrls: string[], fresh: boolean) => Promise<{ prompt: string; diagnosis?: string }>;
   onShowVideoGeneration: (id: string) => void;
 }) {
   const [splitOpen, setSplitOpen] = useState(false);
@@ -406,10 +414,10 @@ export function BeatCard({
   /** Empty extra slots opened with "Add reference" that have no image yet. */
   const [pendingExtras, setPendingExtras] = useState(0);
 
-  async function submitReprompt(direction: string, attach: boolean, examples: ExampleImage[], addToRefs: boolean) {
+  async function submitReprompt(direction: string, attach: boolean, examples: ExampleImage[], addToRefs: boolean, fresh: boolean) {
     setReprompting(true);
     try {
-      const r = await onReprompt(direction, attach, examples.map((e) => e.url));
+      const r = await onReprompt(direction, attach, examples.map((e) => e.url), fresh);
       if (addToRefs) {
         const ids = examples.map((e) => e.media).filter((m): m is ApiMedia => Boolean(m));
         ids.forEach(onMedia);
@@ -426,10 +434,10 @@ export function BeatCard({
       setReprompting(false);
     }
   }
-  async function submitVideoReprompt(direction: string, attach: boolean, examples: ExampleImage[]) {
+  async function submitVideoReprompt(direction: string, attach: boolean, examples: ExampleImage[], _addToRefs: boolean, fresh: boolean) {
     setVideoReprompting(true);
     try {
-      await onRepromptVideo(direction, attach, examples.map((e) => e.url));
+      await onRepromptVideo(direction, attach, examples.map((e) => e.url), fresh);
       setVideoRepromptOpen(false);
       setVideoPromptOpen(true);
       toast.success("Video prompt ready!", { duration: 1500 });

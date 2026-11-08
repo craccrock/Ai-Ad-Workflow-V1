@@ -176,7 +176,8 @@ export async function splitBoard(board: Board, subject: Subject | null): Promise
 export function beatPrompt(beat: Beat): string {
   const parts = [beat.image_prompt.trim()];
   const plan = (beat.reference_plan ?? {}) as { mode?: string; edit_note?: string };
-  if (plan.mode === "edit" && plan.edit_note) parts.push(`Using the attached reference as the base: ${plan.edit_note.trim()}`);
+  // The brain's edit note usually says "swap the person for the subject"; it must not ride along once the subject lock is off.
+  if (plan.mode === "edit" && plan.edit_note && beat.use_subject_lock) parts.push(`Using the attached reference as the base: ${plan.edit_note.trim()}`);
   if (beat.negative_prompt?.trim()) parts.push(`Do not include: ${beat.negative_prompt.trim()}.`);
   return parts.join("\n\n");
 }
@@ -199,21 +200,28 @@ export function beatReferences(beat: Beat, subject: Subject | null, media: Recor
  * Rewrites one beat's image prompt according to the editor's direction, keeping the subject lock,
  * style locks and the beat's job in the script intact. Returns the new prompt (plain text).
  */
-export async function repromptBeat(board: Board, subject: Subject | null, beat: Beat, direction: string, refs: { slot: string }[], opts: { resultUrl?: string | null; exampleUrls?: string[] } = {}): Promise<{ image_prompt: string; diagnosis?: string; usage: { input: number; output: number } }> {
+export async function repromptBeat(board: Board, subject: Subject | null, beat: Beat, direction: string, refs: { slot: string }[], opts: { resultUrl?: string | null; exampleUrls?: string[]; fresh?: boolean } = {}): Promise<{ image_prompt: string; reference_plan: Beat["reference_plan"]; diagnosis?: string; usage: { input: number; output: number } }> {
   if (!process.env.ANTHROPIC_API_KEY) throw new HttpError(503, "ANTHROPIC_API_KEY is not set — add it to the environment to use reprompt");
   if (!direction.trim()) throw new HttpError(400, "Give a direction first");
 
   const settings = await getSettings();
   const brain = (board.brain_output ?? {}) as BrainOutput;
-  const subjectLock = subject ? `${subject.name}: ${subject.base_prompt}`.trim() : brain.subject_lock || "(none)";
+  const fresh = Boolean(opts.fresh);
+  // The per-beat "lock" tick decides whether the board's subject exists for this beat at all.
+  const subjectOn = beat.use_subject_lock && !fresh;
+  const subjectText = subject ? `${subject.name}: ${subject.base_prompt}`.trim() : brain.subject_lock || "";
+  const subjectLock = subjectOn && subjectText ? subjectText : "OFF for this beat. The board's subject does not appear here — do not name or describe them, their ethnicity, hair, wardrobe or jewellery. Describe the people from the direction and the reference images only.";
   const styleLocks = brain.style_locks && Object.keys(brain.style_locks).length ? Object.entries(brain.style_locks).map(([k, v]) => `- ${k}: ${v}`).join("\n") : "(none)";
   const slots = refs.length ? refs.map((r, i) => `image ${i + 1} = ${r.slot}`).join(", ") : "none attached";
+  const plan = (beat.reference_plan ?? {}) as { mode?: string; edit_note?: string };
+  const editNote = subjectOn && plan.mode === "edit" && plan.edit_note ? plan.edit_note.trim() : "";
 
   const system = `You rewrite image-generation prompts for a UGC-style ad storyboard. The prompt you write is sent as-is to Nano Banana (Google image model) together with the reference images listed below, so write it as a single finished prompt: no headings, no options, no commentary, no quotes around it.
 
 Rules:
-- Apply the editor's direction exactly: add what they ask to add, remove what they ask to remove, change what they ask to change. Keep everything else that still fits.
-- Keep the SUBJECT LOCK and STYLE LOCKS unless the direction overrides them.
+- The editor's direction wins over everything else below, including the SUBJECT LOCK, the STYLE LOCKS and the CURRENT PROMPT. Add what they ask to add, remove what they ask to remove, change what they ask to change. Keep everything else that still fits.
+- If the direction puts a different person in the shot (named, described, or pointed at in a reference or example image), the locked subject is OUT of this beat: do not mention their name, ethnicity, skin tone, hair, wardrobe or jewellery anywhere, and describe the new person from the direction and the images instead. Never "restore" a locked subject the editor replaced.
+- Otherwise keep the SUBJECT LOCK and STYLE LOCKS.
 - The image must still serve the voiceover line it sits under.
 - If reference images are attached, refer to them by number ("the woman in image 1", "the pose in image 2") when the prompt depends on them.
 - Default length: a dense paragraph (80–160 words). If the direction asks for longer or more detailed, go to 160–260 words with concrete lighting, lens, framing, wardrobe, texture and setting detail. If it asks for shorter, cut.
@@ -227,11 +235,12 @@ STYLE LOCKS:
 ${styleLocks}
 REFERENCE IMAGES ATTACHED: ${slots}`;
 
+  const currentPrompt = fresh ? "(none — the editor asked to START FROM SCRATCH. Ignore whatever prompt existed before; build a brand-new prompt from the voiceover, the direction and the reference images only.)" : beat.image_prompt.trim() || "(empty)";
   const user = `VOICEOVER FOR THIS BEAT: ${beat.vo || "(none)"}
 ROLE: ${beat.role === "aroll" ? "A-roll (talent on camera)" : "B-roll"}
 ${beat.shot_type ? `SHOT TYPE: ${beat.shot_type}\n` : ""}CURRENT PROMPT:
-${beat.image_prompt.trim() || "(empty)"}
-
+${currentPrompt}
+${editNote ? `\nBRAIN'S EDIT NOTE (was appended to the current prompt at generation time; it is dropped after this rewrite, so fold in whatever still applies and nothing that the direction contradicts):\n${editNote}\n` : ""}
 EDITOR'S DIRECTION:
 ${direction.trim()}
 
@@ -260,7 +269,11 @@ Write the new prompt.`;
   text = text.replace(/^["“]|["”]$/g, "").trim();
   if (!text) throw new HttpError(502, "The brain returned an empty prompt");
 
+  // The rewritten prompt now carries (or deliberately drops) the brain's edit note, so stop appending it at generation time.
+  const { edit_note: _dropped, ...restPlan } = (beat.reference_plan ?? {}) as Record<string, unknown>;
+  void _dropped;
+  const reference_plan = (beat.reference_plan ? restPlan : null) as Beat["reference_plan"];
   const admin = createAdminClient();
-  await admin.from("beats").update({ image_prompt: text }).eq("id", beat.id);
-  return { image_prompt: text, diagnosis, usage: { input: message.usage.input_tokens, output: message.usage.output_tokens } };
+  await admin.from("beats").update({ image_prompt: text, reference_plan }).eq("id", beat.id);
+  return { image_prompt: text, reference_plan, diagnosis, usage: { input: message.usage.input_tokens, output: message.usage.output_tokens } };
 }

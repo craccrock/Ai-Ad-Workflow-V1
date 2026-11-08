@@ -312,20 +312,20 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     });
 
   const reprompt = useCallback(
-    async (beatId: string, direction: string, attachResult: boolean, exampleUrls: string[]) => {
+    async (beatId: string, direction: string, attachResult: boolean, exampleUrls: string[], fresh = false) => {
       await flush();
-      const r = await api<{ image_prompt: string; diagnosis?: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction, attach_result: attachResult, example_urls: exampleUrls } });
-      // Patch against the latest beats so edits made while waiting aren't lost.
-      update(beatsRef.current.map((b) => (b.id === beatId ? { ...b, image_prompt: r.image_prompt } : b)));
+      const r = await api<{ image_prompt: string; reference_plan: Beat["reference_plan"]; diagnosis?: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction, attach_result: attachResult, example_urls: exampleUrls, fresh } });
+      // Patch against the latest beats so edits made while waiting aren't lost. The server dropped the brain's edit note, mirror that here.
+      update(beatsRef.current.map((b) => (b.id === beatId ? { ...b, image_prompt: r.image_prompt, reference_plan: r.reference_plan } : b)));
       return { prompt: r.image_prompt, diagnosis: r.diagnosis };
     },
     [flush, initial.id, update],
   );
 
   const repromptVideo = useCallback(
-    async (beatId: string, direction: string, attachResult: boolean, exampleUrls: string[]) => {
+    async (beatId: string, direction: string, attachResult: boolean, exampleUrls: string[], fresh = false) => {
       await flush();
-      const r = await api<{ video_prompt: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction, target: "video", attach_result: attachResult, example_urls: exampleUrls } });
+      const r = await api<{ video_prompt: string }>(`/api/boards/${initial.id}/beats/${beatId}/reprompt`, { method: "POST", json: { direction, target: "video", attach_result: attachResult, example_urls: exampleUrls, fresh } });
       update(beatsRef.current.map((b) => (b.id === beatId ? { ...b, video_prompt: r.video_prompt } : b)));
       return { prompt: r.video_prompt };
     },
@@ -606,10 +606,10 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 onInsertAfter={() => insertAfter(beat.id)}
                 onDelete={() => deleteBeat(beat.id)}
                 onGenerate={() => void generate(beat.id)}
-                onReprompt={(direction, attach, examples) => reprompt(beat.id, direction, attach, examples)}
+                onReprompt={(direction, attach, examples, fresh) => reprompt(beat.id, direction, attach, examples, fresh)}
                 onShowGeneration={(id) => void showGeneration(beat.id, id)}
                 onAnimate={() => void animate(beat.id)}
-                onRepromptVideo={(direction, attach, examples) => repromptVideo(beat.id, direction, attach, examples)}
+                onRepromptVideo={(direction, attach, examples, fresh) => repromptVideo(beat.id, direction, attach, examples, fresh)}
                 onShowVideoGeneration={(id) => void showGeneration(beat.id, id, "video")}
               />
             ))}
