@@ -316,29 +316,46 @@ export async function assembleFinal(board: Board, beats: Beat[], gens: Record<st
     for (const p of placements) if (p.end_s <= p.start_s) skipped.push({ beat_id: p.beat_id, reason: "clip too short after its in-point" });
     if (!live.length) throw new HttpError(422, "Every B-roll clip was too short after its in-point");
 
-    // 4. One ffmpeg pass: shift each B-roll to its start time and overlay it for its window; keep the A-roll audio.
-    const inputs = ["-i", base];
-    for (const { part } of live) inputs.push("-i", part);
-    let chain = "[0:v]";
-    const filters: string[] = [];
-    live.forEach(({ p }, i) => {
-      filters.push(`[${i + 1}:v]setpts=PTS-STARTPTS+${p.start_s.toFixed(3)}/TB[b${i}]`);
-      const out = i === live.length - 1 ? "[vout]" : `[v${i}]`;
-      filters.push(`${chain}[b${i}]overlay=0:0:eof_action=pass:enable='between(t,${p.start_s.toFixed(3)},${p.end_s.toFixed(3)})'${out}`);
-      chain = out;
+    // 4. Build the finished picture as a chain of hard cuts, one small ffmpeg run per piece: the A-roll between
+    //    overlays, then the B-roll part, and so on. Each run decodes one input, so memory stays flat no matter how
+    //    many clips there are (one overlay pass with every clip open at once ran the function out of memory).
+    const enc = ["-an", "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-maxrate", `${MAX_VIDEO_KBPS}k`, "-bufsize", `${MAX_VIDEO_KBPS * 2}k`, "-pix_fmt", "yuv420p"];
+    const pieces: string[] = [];
+    const gaps: { from: number; to: number; out: string }[] = [];
+    let at = 0;
+    live.forEach(({ p, part }, i) => {
+      if (p.start_s - at > 0.04) {
+        const out = path.join(dir, `a-${String(i).padStart(3, "0")}.mp4`);
+        gaps.push({ from: at, to: p.start_s, out });
+        pieces.push(out);
+      }
+      pieces.push(part);
+      at = p.end_s;
     });
+    if (info.duration - at > 0.04) {
+      const out = path.join(dir, "a-tail.mp4");
+      gaps.push({ from: at, to: info.duration, out });
+      pieces.push(out);
+    }
+    for (const g of gaps) {
+      const r = await run(bin, ["-hide_banner", "-y", "-ss", g.from.toFixed(3), "-i", base, "-t", (g.to - g.from).toFixed(3), ...enc, g.out]);
+      if (r.code !== 0) throw new HttpError(500, `ffmpeg failed cutting the A-roll at ${g.from.toFixed(1)}s: ${lastLine(r.stderr)}`, r.stderr.slice(-600));
+    }
+
+    // 5. Join the pieces with stream copy, then put her untouched audio back under the picture.
+    const list = path.join(dir, "final-list.txt");
+    await writeFile(list, pieces.map((p) => `file '${p.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`).join("\n"));
+    const video = path.join(dir, "final-video.mp4");
+    const joined = await run(bin, ["-hide_banner", "-y", "-f", "concat", "-safe", "0", "-i", list, "-c", "copy", video]);
+    if (joined.code !== 0) throw new HttpError(500, `ffmpeg failed joining the cut: ${lastLine(joined.stderr)}`, joined.stderr.slice(-600));
     const out = path.join(dir, "final.mp4");
-    const r = await run(
-      bin,
-      ["-hide_banner", "-y", ...inputs, "-filter_complex", filters.join(";"), "-map", "[vout]", "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-maxrate", `${MAX_VIDEO_KBPS}k`, "-bufsize", `${MAX_VIDEO_KBPS * 2}k`, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out],
-      280_000,
-    );
-    if (r.code !== 0) throw new HttpError(500, `ffmpeg failed laying the B-roll: ${lastLine(r.stderr)}`, r.stderr.slice(-600));
+    const r = await run(bin, ["-hide_banner", "-y", "-i", video, "-i", base, "-map", "0:v:0", "-map", "1:a?", "-c:v", "copy", "-c:a", "copy", "-shortest", "-movflags", "+faststart", out]);
+    if (r.code !== 0) throw new HttpError(500, `ffmpeg failed adding the audio: ${lastLine(r.stderr)}`, r.stderr.slice(-600));
     const final = await probe(bin, out);
     const body = await readFile(out);
     if (body.byteLength > UPLOAD_CAP_BYTES) throw new HttpError(500, `The finished ad is ${Math.round(body.byteLength / 1048576)} MB, over the storage upload cap`);
 
-    // 5. Upload, record, and log every placed B-roll clip as a keeper.
+    // 6. Upload, record, and log every placed B-roll clip as a keeper.
     const storagePath = `assemblies/${board.id}/final-${Date.now()}.mp4`;
     const admin = createAdminClient();
     const { error } = await admin.storage.from("generations").upload(storagePath, body, { contentType: "video/mp4", upsert: true, cacheControl: IMMUTABLE_CACHE });
