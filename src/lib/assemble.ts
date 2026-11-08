@@ -11,8 +11,9 @@ import { removeStorageObject } from "@/lib/storage";
 import type { ApiGeneration } from "@/lib/client-api";
 import type { AvatarAssembly, AvatarChunk, Board } from "@/lib/types";
 
-/** Largest file we let the assembled track be: Supabase's per-upload cap is 50 MB on the Free plan. */
-const UPLOAD_BUDGET_BYTES = 44 * 1024 * 1024;
+/** Supabase Pro allows 5 GB per upload, so quality is the only constraint: 12 Mbps 1080p is more than any ad platform keeps. */
+const MAX_VIDEO_KBPS = 12000;
+const UPLOAD_CAP_BYTES = 5 * 1024 * 1024 * 1024;
 
 /** The release ffmpeg-static 5.3 ships; the runtime fallback downloads the very same build. */
 const FFMPEG_STATIC_RELEASE = "b6.1.1";
@@ -154,12 +155,12 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
     const trims: AvatarAssembly["trims"] = ordered.map((c, i) => ({ chunk_id: c.id, cut_s: Math.round(cuts[i] * 100) / 100, source_s: Math.round(infos[i].duration * 100) / 100 }));
     const totalSeconds = cuts.reduce((s, c) => s + c, 0);
 
-    // Supabase caps a single upload (50 MB on the Free plan). Size the video bitrate so the whole track lands
-    // under it with headroom, capped at 8 Mbps — more than Meta keeps after its own re-encode anyway.
+    // Quality-first encode: constant quality with a generous ceiling on the bitrate.
     const audioKbps = 160;
-    const videoKbps = Math.max(1500, Math.min(8000, Math.floor((UPLOAD_BUDGET_BYTES * 8) / 1000 / Math.max(1, totalSeconds)) - audioKbps));
+    const videoKbps = MAX_VIDEO_KBPS;
+    void totalSeconds;
     const vf = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p`;
-    const encode = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-maxrate", `${videoKbps}k`, "-bufsize", `${videoKbps * 2}k`, "-pix_fmt", "yuv420p"];
+    const encode = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-maxrate", `${videoKbps}k`, "-bufsize", `${videoKbps * 2}k`, "-pix_fmt", "yuv420p"];
     const parts = sources.map((_, i) => path.join(dir, `part-${String(i).padStart(3, "0")}.mp4`));
 
     // Encode two clips at a time: the function has ~2 vCPUs, and each x264 run already threads.
@@ -186,7 +187,7 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
     if (r.code !== 0) throw new HttpError(500, `ffmpeg failed to join the clips: ${lastLine(r.stderr)}`, r.stderr.slice(-600));
     const final = await probe(bin, out);
     const body = await readFile(out);
-    if (body.byteLength > 50 * 1024 * 1024) throw new HttpError(500, `The assembled track is ${Math.round(body.byteLength / 1048576)} MB, over the 50 MB upload cap — lower the avatar quality and assemble again`);
+    if (body.byteLength > UPLOAD_CAP_BYTES) throw new HttpError(500, `The assembled track is ${Math.round(body.byteLength / 1048576)} MB, over the storage upload cap`);
 
     // 4. Upload and record; drop the previous assembly file.
     const storagePath = `assemblies/${board.id}/aroll-${Date.now()}.mp4`;
