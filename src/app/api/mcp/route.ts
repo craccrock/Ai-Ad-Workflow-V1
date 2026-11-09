@@ -6,9 +6,9 @@ import { registerMcpTools } from "@/lib/mcp-tools";
 export const maxDuration = 300;
 
 const handler = createMcpHandler(registerMcpTools, {
-  serverInfo: { name: "madaket-gen-studio", version: "1.0.0" },
+  serverInfo: { name: "affirm-gen-studio", version: "1.0.0" },
   instructions:
-    "Madaket Gen Studio: the Madaket team's image and video generator. Call list_models first, estimate_cost before expensive jobs, then generate and wait_for_generations. Results land in the shared gallery. Each API key has a 24-hour spend cap (get_budget).",
+    "Affirm Gen Studio: the Affirm Acquisition team's image and video generator. Call list_models first, estimate_cost before expensive jobs, then generate and wait_for_generations. Results land in the shared gallery. Each API key has a 24-hour spend cap (get_budget).",
 });
 
 /**

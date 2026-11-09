@@ -16,6 +16,7 @@ import type { AvatarAssembly, AvatarChunk, Beat, BoardWithBeats, FinalAssembly, 
 import { cn, formatUsd } from "@/lib/utils";
 import { AvatarCard, MIN_AVATAR_PROMPT_CHARS, type ChunkPatch } from "./avatar-card";
 import { BeatCard, fetchGeneration, videoModels, type BeatPatch } from "./beat-card";
+import { CaptionsPanel } from "./captions-panel";
 import { EditNotes } from "./edit-notes";
 import { RefSlot } from "./ref-slot";
 import { SubjectPicker } from "./subject-picker";
@@ -1031,6 +1032,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                         </Button>
                       </div>
                       <EditNotes boardId={initial.id} target="final" canEdit={canEdit} isAdmin={profile.role === "admin"} />
+                      <CaptionsPanel boardId={initial.id} initial={board.captions ?? null} canEdit={canEdit} canRender={!!board.avatar_assembly?.words?.length} title={board.title} />
                     </div>
                   </div>
                 ) : (

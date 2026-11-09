@@ -8,9 +8,9 @@ const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
 const jetbrains = JetBrains_Mono({ variable: "--font-jetbrains", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Madaket Gen Studio",
-  description: "Internal image and video generation for Madaket Brands.",
-  icons: { icon: "/madaket-dog-sketch.png" },
+  title: "Affirm Gen Studio",
+  description: "Affirm Acquisition's AI ad studio: storyboards, avatars, B-roll, cuts.",
+  icons: { icon: "/icon.png" },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

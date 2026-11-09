@@ -13,7 +13,7 @@ import type { Generation, GenerationWithUser } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
 
 /**
- * MCP tools for Madaket Gen Studio. Each tool runs as the API key's owner, through the same code
+ * MCP tools for Affirm Gen Studio. Each tool runs as the API key's owner, through the same code
  * as the web app and REST API: same validation, pricing, spend ledger, gallery and library.
  */
 

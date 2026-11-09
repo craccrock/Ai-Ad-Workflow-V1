@@ -188,6 +188,7 @@ export type Board = {
   /** The assembled talking-head track: every chunk clip joined in order, tails trimmed. */
   avatar_assembly: AvatarAssembly | null;
   final_assembly: FinalAssembly | null;
+  captions: CaptionsJob | null;
   brain_output: { subject_lock?: string; style_locks?: Record<string, string> } | null;
   created_at: string;
   updated_at: string;
@@ -206,6 +207,55 @@ export type AvatarAssembly = {
 };
 
 export type TranscriptWord = { text: string; start: number; end: number };
+
+/** One shot of a reference edit, as cut by the human editor. */
+export type ReferenceShot = { i: number; start: number; end: number; kind: "speaker" | "broll" | "text" | "other"; what: string };
+
+/** Pacing numbers read off a reference edit. Seconds unless noted. */
+export type ReferenceProfile = {
+  duration_s: number;
+  shots: number;
+  cuts_per_minute: number;
+  speaker_share: number;
+  broll_share: number;
+  opens_on_speaker_s: number;
+  closes_on: "speaker" | "broll";
+  broll_runs: { count: number; min: number; median: number; max: number };
+  speaker_returns: { count: number; min: number; median: number; max: number };
+  /** How far before the first word of its line a B-roll run starts (positive = B-roll leads the line). */
+  broll_lead_s: number | null;
+  /** Each spoken sentence and whether the editor stayed on the speaker or went to B-roll for it. */
+  line_map: { text: string; start: number; end: number; on: "speaker" | "broll" | "mixed" }[];
+};
+
+export type ReferenceEdit = {
+  id: string;
+  user_id: string | null;
+  media_id: string | null;
+  title: string;
+  url: string;
+  duration_s: number | null;
+  status: "pending" | "ready" | "failed";
+  error: string | null;
+  words: TranscriptWord[] | null;
+  shots: ReferenceShot[] | null;
+  profile: ReferenceProfile | null;
+  summary: string | null;
+  created_at: string;
+};
+
+/** A captioned render of the finished ad, made by the Remotion worker. */
+export type CaptionsJob = {
+  status: "queued" | "rendering" | "ready" | "failed";
+  preset: string;
+  source_url: string;
+  url?: string;
+  path?: string;
+  error?: string;
+  progress?: number;
+  created_at: string;
+  updated_at: string;
+};
 
 /** A note the editor left on an assembled output (A-roll track or finished ad). */
 export type EditNote = { id: string; target_type: "aroll" | "final"; note: string; at_s: number | null; created_at: string; user_id: string | null };

@@ -369,7 +369,7 @@ function ViewerPrompt({ prompt }: { prompt: string }) {
 /** Images offer WebP as well as the original; everything else downloads straight. */
 function DownloadButton({ gen }: { gen: ApiGeneration }) {
   const ext = extensionFromUrl(gen.result_url!, gen.media_type);
-  const name = `madaket-${gen.model}-${gen.id.slice(0, 8)}.${ext}`;
+  const name = `affirm-${gen.model}-${gen.id.slice(0, 8)}.${ext}`;
   const original = () => downloadFile(gen.result_url!, name);
 
   const takes = takesOf(gen);

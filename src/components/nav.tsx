@@ -14,6 +14,7 @@ export function Nav({ profile }: { profile: Profile }) {
     { href: "/", label: "Studio" },
     { href: "/boards", label: "Boards" },
     { href: "/library", label: "Library" },
+    { href: "/training", label: "Training" },
     ...(profile.role === "admin"
       ? [
           { href: "/admin", label: "Spend" },
@@ -29,8 +30,8 @@ export function Nav({ profile }: { profile: Profile }) {
     <header className="sticky top-0 z-30 border-b border-hairline bg-navy/90 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-[1400px] items-center gap-6 px-4 sm:px-6 lg:px-8">
         <Link href="/" className="flex shrink-0 items-center gap-3">
-          <Image src="/madaket-dog-sketch.png" alt="Madaket" width={24} height={36} priority className="opacity-90" />
-          <span className="hidden font-serif text-lg text-cream sm:inline">Madaket Gen Studio</span>
+          <Image src="/affirm-aa.png" alt="Affirm Acquisition" width={30} height={30} priority className="opacity-90" />
+          <span className="hidden font-serif text-lg text-cream sm:inline">Affirm Gen Studio</span>
         </Link>
 
         <nav className="-mb-px flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">

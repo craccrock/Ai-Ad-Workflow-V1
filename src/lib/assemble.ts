@@ -35,7 +35,7 @@ async function runnable(bin: string): Promise<boolean> {
  * it made it into the bundle and runs; a copy downloaded once into /tmp (Vercel sometimes drops or de-executes the
  * 80 MB binary during tracing); finally whatever "ffmpeg" is on PATH.
  */
-async function ffmpegBinary(): Promise<string> {
+export async function ffmpegBinary(): Promise<string> {
   if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
   try {
     const mod = (await import("ffmpeg-static")) as unknown as { default?: string | null } | string | null;
@@ -60,7 +60,7 @@ async function ffmpegBinary(): Promise<string> {
   throw new HttpError(500, "ffmpeg is not available in this environment");
 }
 
-function run(bin: string, args: string[], timeoutMs = 240_000): Promise<{ code: number; stderr: string }> {
+export function run(bin: string, args: string[], timeoutMs = 240_000): Promise<{ code: number; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
@@ -84,7 +84,7 @@ function run(bin: string, args: string[], timeoutMs = 240_000): Promise<{ code: 
 }
 
 /** Duration, frame size and whether there is an audio stream, read from ffmpeg's own probe output. */
-async function probe(bin: string, file: string): Promise<{ duration: number; width: number; height: number; hasAudio: boolean }> {
+export async function probe(bin: string, file: string): Promise<{ duration: number; width: number; height: number; hasAudio: boolean }> {
   const { stderr } = await run(bin, ["-hide_banner", "-i", file, "-f", "null", "-"], 60_000);
   const d = stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
   const duration = d ? Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]) : 0;
@@ -110,7 +110,7 @@ async function tailCut(bin: string, file: string, duration: number): Promise<num
 }
 
 /** The last meaningful line of ffmpeg's stderr (skipping progress lines), for error messages. */
-const lastLine = (stderr: string) =>
+export const lastLine = (stderr: string) =>
   stderr
     .trim()
     .split(/\r?\n/)
@@ -119,7 +119,7 @@ const lastLine = (stderr: string) =>
     ?.trim()
     .slice(0, 200) ?? "no output";
 
-async function download(url: string, to: string) {
+export async function download(url: string, to: string) {
   const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(60_000) });
   if (!res.ok) throw new HttpError(502, `Couldn't download a clip (${res.status})`);
   await writeFile(to, Buffer.from(await res.arrayBuffer()));

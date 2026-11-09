@@ -78,7 +78,7 @@ export const Gallery = forwardRef<
     try {
       await downloadZip(
         ready.map((g) => ({ url: g.result_url!, mediaType: g.media_type, model: g.model_display_name, prompt: g.prompt, createdAt: g.created_at })),
-        `madaket-${new Date().toISOString().slice(0, 10)}-${ready.length}-files.zip`,
+        `affirm-${new Date().toISOString().slice(0, 10)}-${ready.length}-files.zip`,
         (done, total) => toast.loading(`${webp ? "Converting" : "Downloading"} ${done} of ${total}…`, { id: toastId }),
         { webp },
       );

@@ -1,0 +1,30 @@
+{
+  "name": "gen-studio-worker",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Always-on render worker for Affirm Gen Studio: Remotion captions (and, next, the QA agent). Needs Chrome, so it runs outside Vercel.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "render:test": "tsx src/test-render.ts"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.542",
+    "@remotion/google-fonts": "4.0.542",
+    "@remotion/renderer": "4.0.542",
+    "@supabase/supabase-js": "^2.116.0",
+    "express": "^5.1.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "remotion": "4.0.542",
+    "tsx": "^4.23.13",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "typescript": "^5"
+  }
+}

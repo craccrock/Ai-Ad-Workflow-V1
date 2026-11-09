@@ -333,7 +333,7 @@ function CredentialsMessage({
     () => "",
   );
   const message = [
-    credentials.isReset ? `Hi ${credentials.name.split(" ")[0]}, here's a new temporary password for Madaket Gen Studio.` : `Hi ${credentials.name.split(" ")[0]}, here's your login for Madaket Gen Studio.`,
+    credentials.isReset ? `Hi ${credentials.name.split(" ")[0]}, here's a new temporary password for Affirm Gen Studio.` : `Hi ${credentials.name.split(" ")[0]}, here's your login for Affirm Gen Studio.`,
     "",
     `Site: ${siteUrl}`,
     `Email: ${credentials.email}`,
