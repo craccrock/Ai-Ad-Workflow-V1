@@ -2,8 +2,8 @@ import "server-only";
 import { LEARNING_TAGS, type LearningTag } from "@/config/learning-tags";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export type LearningKind = "reprompt" | "reroll" | "take_delete" | "take_select" | "thumbs_down" | "keeper";
-export type LearningTarget = "beat_image" | "beat_video" | "chunk";
+export type LearningKind = "reprompt" | "reroll" | "take_delete" | "take_select" | "thumbs_down" | "keeper" | "edit_note";
+export type LearningTarget = "beat_image" | "beat_video" | "chunk" | "aroll" | "final";
 export const THUMBS_DOWN_TAGS = LEARNING_TAGS.map((t) => t.value) as [LearningTag, ...LearningTag[]];
 
 export type LearningEvent = {

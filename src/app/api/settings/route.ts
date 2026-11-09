@@ -10,7 +10,16 @@ export async function GET(request: Request) {
   return handleRoute(async () => {
     const actor = await requireActor(request);
     const settings = await getSettings();
-    if (!actor.isAdmin) return Response.json({ board_concurrency: settings.board_concurrency, board_default_model: settings.board_default_model });
+    if (!actor.isAdmin)
+      return Response.json({
+        board_concurrency: settings.board_concurrency,
+        board_default_model: settings.board_default_model,
+        edit_rules: settings.edit_rules,
+        cut_min_broll_s: settings.cut_min_broll_s,
+        cut_min_return_s: settings.cut_min_return_s,
+        cut_head_pad_s: settings.cut_head_pad_s,
+        cut_tail_pad_s: settings.cut_tail_pad_s,
+      });
     return Response.json({ ...settings, defaults: { ...DEFAULT_SETTINGS, board_brain_prompt: DEFAULT_BRAIN_PROMPT, board_video_prompt: DEFAULT_VIDEO_PROMPT, board_avatar_prompt: DEFAULT_AVATAR_PROMPT } });
   });
 }
@@ -25,6 +34,11 @@ const schema = z.object({
   board_avatar_prompt: z.string().min(50).max(60000).optional(),
   board_default_avatar_model: z.string().min(1).max(80).optional(),
   board_pronunciations: z.string().max(20000).optional(),
+  edit_rules: z.string().max(20000).optional(),
+  cut_min_broll_s: z.number().min(0.5).max(10).optional(),
+  cut_min_return_s: z.number().min(0.5).max(10).optional(),
+  cut_head_pad_s: z.number().min(0).max(1).optional(),
+  cut_tail_pad_s: z.number().min(0).max(1.5).optional(),
 });
 
 /** PUT /api/settings — admin only. */

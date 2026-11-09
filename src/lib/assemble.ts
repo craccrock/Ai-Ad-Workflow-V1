@@ -3,7 +3,9 @@ import { spawn } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DEFAULT_CUT_RULES, type CutRules } from "@/config/edit-rules";
 import { HttpError } from "@/lib/auth";
+import { clipWords } from "@/lib/clip-transcripts";
 import { IMMUTABLE_CACHE } from "@/lib/cache";
 import { logLearningMany } from "@/lib/learning";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -128,7 +130,7 @@ async function download(url: string, to: string) {
  * (trailing-silence detection), normalised to the first clip's frame size at 30 fps, then concatenated with
  * hard cuts and no gaps. The result is uploaded to the generations bucket and recorded on the board.
  */
-export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: Record<string, ApiGeneration>, userId: string): Promise<AvatarAssembly> {
+export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: Record<string, ApiGeneration>, userId: string, rules: CutRules = DEFAULT_CUT_RULES): Promise<AvatarAssembly> {
   const ordered = [...chunks].sort((a, b) => a.position - b.position);
   const missing = ordered.filter((c) => !(c.generation_id && gens[c.generation_id]?.status === "completed" && gens[c.generation_id]?.result_url));
   if (missing.length) throw new HttpError(422, `${missing.length} chunk${missing.length === 1 ? " has" : "s have"} no finished clip yet (#${missing.map((c) => ordered.indexOf(c) + 1).join(", #")})`);
@@ -150,11 +152,42 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
     const first = await probe(bin, sources[0]);
     const width = first.width || 720;
     const height = first.height || 1280;
-    // Where each clip gets cut, all probed up front so the total length is known before encoding.
+    // Where each clip gets cut. With a transcript the cut is word-accurate: a hair before her first word to a
+    //    hair after her last, so the breath before she starts and the held pose after she finishes both go.
+    //    Clips with no words fall back to trailing-silence detection.
     const infos = await Promise.all(sources.map((src, i) => (i === 0 ? Promise.resolve(first) : probe(bin, src))));
-    const cuts = await Promise.all(sources.map((src, i) => (infos[i].hasAudio ? tailCut(bin, src, infos[i].duration) : Promise.resolve(infos[i].duration))));
-    const trims: AvatarAssembly["trims"] = ordered.map((c, i) => ({ chunk_id: c.id, cut_s: Math.round(cuts[i] * 100) / 100, source_s: Math.round(infos[i].duration * 100) / 100 }));
-    const totalSeconds = cuts.reduce((s, c) => s + c, 0);
+    const clipTranscripts = await Promise.all(ordered.map((c, i) => (infos[i].hasAudio ? clipWords(c.generation_id!, gens[c.generation_id!].result_url!) : Promise.resolve([] as TranscriptWord[]))));
+    const heads: number[] = [];
+    const cuts: number[] = [];
+    for (let i = 0; i < sources.length; i++) {
+      const w = clipTranscripts[i];
+      if (w.length) {
+        heads[i] = Math.max(0, w[0].start - rules.head_pad_s);
+        cuts[i] = Math.min(infos[i].duration, w[w.length - 1].end + rules.tail_pad_s);
+        if (cuts[i] - heads[i] < 0.5) {
+          heads[i] = 0;
+          cuts[i] = infos[i].duration;
+        }
+      } else {
+        heads[i] = 0;
+        cuts[i] = infos[i].hasAudio ? await tailCut(bin, sources[i], infos[i].duration) : infos[i].duration;
+      }
+    }
+    const trims: AvatarAssembly["trims"] = ordered.map((c, i) => ({ chunk_id: c.id, cut_s: Math.round(cuts[i] * 100) / 100, source_s: Math.round(infos[i].duration * 100) / 100, head_s: Math.round(heads[i] * 100) / 100 }));
+    const totalSeconds = cuts.reduce((s, c, i) => s + (c - heads[i]), 0);
+    // The track's own transcript falls straight out of the clip transcripts, shifted onto the joined timeline.
+    const trackWords: TranscriptWord[] = [];
+    let offset = 0;
+    for (let i = 0; i < sources.length; i++) {
+      const len = cuts[i] - heads[i];
+      for (const w of clipTranscripts[i]) {
+        const start = w.start - heads[i];
+        const end = w.end - heads[i];
+        if (end <= 0 || start >= len) continue;
+        trackWords.push({ text: w.text, start: Math.round((offset + Math.max(0, start)) * 1000) / 1000, end: Math.round((offset + Math.min(len, end)) * 1000) / 1000 });
+      }
+      offset += len;
+    }
 
     // Quality-first encode: constant quality with a generous ceiling on the bitrate.
     const audioKbps = 160;
@@ -171,9 +204,10 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
         while (next < sources.length) {
           const i = next++;
           const src = sources[i];
+          const len = (cuts[i] - heads[i]).toFixed(3);
           const args = infos[i].hasAudio
-            ? ["-hide_banner", "-y", "-i", src, "-t", cuts[i].toFixed(3), "-vf", vf, ...encode, "-c:a", "aac", "-b:a", `${audioKbps}k`, "-ar", "48000", "-ac", "2", "-movflags", "+faststart", parts[i]]
-            : ["-hide_banner", "-y", "-i", src, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", cuts[i].toFixed(3), "-vf", vf, ...encode, "-c:a", "aac", "-b:a", `${audioKbps}k`, "-shortest", "-movflags", "+faststart", parts[i]];
+            ? ["-hide_banner", "-y", "-ss", heads[i].toFixed(3), "-i", src, "-t", len, "-vf", vf, ...encode, "-c:a", "aac", "-b:a", `${audioKbps}k`, "-ar", "48000", "-ac", "2", "-movflags", "+faststart", parts[i]]
+            : ["-hide_banner", "-y", "-ss", heads[i].toFixed(3), "-i", src, "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", len, "-vf", vf, ...encode, "-c:a", "aac", "-b:a", `${audioKbps}k`, "-shortest", "-movflags", "+faststart", parts[i]];
           const r = await run(bin, args);
           if (r.code !== 0) throw new HttpError(500, `ffmpeg failed on chunk #${i + 1}: ${lastLine(r.stderr)}`, r.stderr.slice(-600));
         }
@@ -196,7 +230,7 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
     const { error } = await admin.storage.from("generations").upload(storagePath, body, { contentType: "video/mp4", upsert: true, cacheControl: IMMUTABLE_CACHE });
     if (error) throw new HttpError(500, `Storage upload failed: ${error.message}`);
     const { data } = admin.storage.from("generations").getPublicUrl(storagePath);
-    const assembly: AvatarAssembly = { url: data.publicUrl, path: storagePath, duration_s: Math.round(final.duration * 10) / 10, chunk_ids: ordered.map((c) => c.id), trims, created_at: new Date().toISOString() };
+    const assembly: AvatarAssembly = { url: data.publicUrl, path: storagePath, duration_s: Math.round(final.duration * 10) / 10, chunk_ids: ordered.map((c) => c.id), trims, words: trackWords.length ? trackWords : undefined, created_at: new Date().toISOString() };
     if (board.avatar_assembly?.path && board.avatar_assembly.path !== storagePath) await removeStorageObject("generations", board.avatar_assembly.path).catch(() => {});
     const { error: upErr } = await admin.from("boards").update({ avatar_assembly: assembly, updated_at: new Date().toISOString() }).eq("id", board.id);
     if (upErr) throw new HttpError(500, upErr.message);
@@ -211,7 +245,7 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
         generation_id: c.generation_id,
         model: gens[c.generation_id!].model ?? null,
         prompt: c.video_prompt,
-        meta: { vo: c.vo, duration: c.duration, cut_s: trims[i].cut_s, source_s: trims[i].source_s, assembly: storagePath },
+        meta: { vo: c.vo, duration: c.duration, cut_s: trims[i].cut_s, head_s: trims[i].head_s, source_s: trims[i].source_s, spoken: clipTranscripts[i].map((w) => w.text).join(" "), assembly: storagePath, rules },
       })),
     );
     return assembly;
@@ -223,9 +257,7 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
 // ─── B-roll over A-roll ───────────────────────────────────────────────────────
 
 const MIN_OVERLAY_SECONDS = 0.8;
-/** Editorial pacing: no B-roll shorter than this, and no cut back to her shorter than this. */
-const MIN_BROLL_SECONDS = 2;
-const MIN_RETURN_SECONDS = 2;
+
 
 /**
  * Lays each B-roll beat's clip over the A-roll track for the stretch where its line is spoken. The line is found
@@ -233,7 +265,7 @@ const MIN_RETURN_SECONDS = 2;
  * the beat's cap, whichever is shortest), so a short clip cuts back to her early. Her audio runs underneath
  * untouched. Beats without a clip, with the overlay turned off, or whose line can't be found are skipped and listed.
  */
-export async function assembleFinal(board: Board, beats: Beat[], gens: Record<string, ApiGeneration>, words: TranscriptWord[], userId: string): Promise<FinalAssembly> {
+export async function assembleFinal(board: Board, beats: Beat[], gens: Record<string, ApiGeneration>, words: TranscriptWord[], userId: string, rules: CutRules = DEFAULT_CUT_RULES): Promise<FinalAssembly> {
   const track = board.avatar_assembly;
   if (!track?.url) throw new HttpError(422, "Assemble the A-roll first");
   if (!words.length) throw new HttpError(422, "The A-roll track has no transcript yet");
@@ -292,9 +324,9 @@ export async function assembleFinal(board: Board, beats: Beat[], gens: Record<st
 
     // 3. Pace the cut like an editor would. Each clip was placed on its own line; left like that the ad flips to
     //    B-roll for two seconds, back to her for half a second, and off again. So: a B-roll run carries through any
-    //    gap shorter than MIN_RETURN_SECONDS into the next clip (neighbouring B-roll lines become one continuous
-    //    stretch), every clip shows for at least MIN_BROLL_SECONDS, and when we do cut back to her she gets at least
-    //    MIN_RETURN_SECONDS on camera. All of it limited by how much footage each clip actually has past its in-point.
+    //    gap shorter than rules.min_return_s into the next clip (neighbouring B-roll lines become one continuous
+    //    stretch), every clip shows for at least rules.min_broll_s, and when we do cut back to her she gets at least
+    //    rules.min_return_s on camera. All of it limited by how much footage each clip actually has past its in-point.
     const clipInfos = await Promise.all(srcs.map((f) => probe(bin, f)));
     const avail = placements.map((p, i) => Math.max(0, clipInfos[i].duration - p.in_s));
     const lineEnd = placements.map((p) => p.end_s); // the spoken window, before pacing
@@ -302,10 +334,10 @@ export async function assembleFinal(board: Board, beats: Beat[], gens: Record<st
       const p = placements[i];
       const nxt = placements[i + 1];
       const limit = nxt ? nxt.start_s : info.duration;
-      let end = Math.max(lineEnd[i], p.start_s + MIN_BROLL_SECONDS);
-      if (limit - end < MIN_RETURN_SECONDS) end = limit; // too short a return to her: carry through
+      let end = Math.max(lineEnd[i], p.start_s + rules.min_broll_s);
+      if (limit - end < rules.min_return_s) end = limit; // too short a return to her: carry through
       p.end_s = Math.min(end, p.start_s + avail[i], limit);
-      if (nxt && nxt.start_s - p.end_s > 0 && nxt.start_s - p.end_s < MIN_RETURN_SECONDS) {
+      if (nxt && nxt.start_s - p.end_s > 0 && nxt.start_s - p.end_s < rules.min_return_s) {
         // This clip ran out before the next one starts: bring the next one in early to close the gap.
         const need = lineEnd[i + 1] - p.end_s;
         if (need <= avail[i + 1]) nxt.start_s = p.end_s;
@@ -406,7 +438,7 @@ export async function assembleFinal(board: Board, beats: Beat[], gens: Record<st
         generation_id: p.generation_id,
         model: gens[p.generation_id]?.model ?? null,
         prompt: byId.get(p.beat_id)?.video_prompt ?? null,
-        meta: { vo: byId.get(p.beat_id)?.vo, start_s: p.start_s, end_s: p.end_s, in_s: p.in_s, assembly: storagePath },
+        meta: { vo: byId.get(p.beat_id)?.vo, start_s: p.start_s, end_s: p.end_s, in_s: p.in_s, assembly: storagePath, rules },
       })),
     );
     return assembly;

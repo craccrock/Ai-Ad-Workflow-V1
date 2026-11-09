@@ -16,6 +16,7 @@ import type { AvatarAssembly, AvatarChunk, Beat, BoardWithBeats, FinalAssembly, 
 import { cn, formatUsd } from "@/lib/utils";
 import { AvatarCard, MIN_AVATAR_PROMPT_CHARS, type ChunkPatch } from "./avatar-card";
 import { BeatCard, fetchGeneration, videoModels, type BeatPatch } from "./beat-card";
+import { EditNotes } from "./edit-notes";
 import { RefSlot } from "./ref-slot";
 import { SubjectPicker } from "./subject-picker";
 
@@ -962,12 +963,12 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                     {board.avatar_assembly.duration_s}s · {board.avatar_assembly.chunk_ids.length} clips · assembled {new Date(board.avatar_assembly.created_at).toLocaleString()}
                   </p>
                   <p className="text-[11px] leading-snug text-cream-2">
-                    Hard cuts, no gaps. Each clip was cut right after her last word; the trims below show how much held pose came off each one. This track is what the B-roll gets laid over next.
+                    Hard cuts, no gaps. Each clip is cut from just before her first word to just after her last (word timestamps), so breaths and held poses go; the trims below show what came off. This track is what the B-roll gets laid over next.
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {board.avatar_assembly.trims.map((t, i) => (
-                      <span key={t.chunk_id} className="rounded-[4px] border border-hairline px-1.5 py-0.5 font-mono text-[10px] text-muted" title={`chunk #${i + 1}: kept ${t.cut_s}s of ${t.source_s}s`}>
-                        #{i + 1} {t.cut_s}s{t.source_s - t.cut_s > 0.05 ? ` (−${(t.source_s - t.cut_s).toFixed(1)})` : ""}
+                      <span key={t.chunk_id} className="rounded-[4px] border border-hairline px-1.5 py-0.5 font-mono text-[10px] text-muted" title={`chunk #${i + 1}: kept ${(t.cut_s - (t.head_s ?? 0)).toFixed(2)}s of ${t.source_s}s (${(t.head_s ?? 0).toFixed(2)}s off the head, ${(t.source_s - t.cut_s).toFixed(2)}s off the tail)`}>
+                        #{i + 1} {(t.cut_s - (t.head_s ?? 0)).toFixed(1)}s{t.source_s - (t.cut_s - (t.head_s ?? 0)) > 0.05 ? ` (−${(t.source_s - (t.cut_s - (t.head_s ?? 0))).toFixed(1)})` : ""}
                       </span>
                     ))}
                   </div>
@@ -976,6 +977,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                       <Download /> Download A-roll
                     </Button>
                   </div>
+                  <EditNotes boardId={initial.id} target="aroll" canEdit={canEdit} isAdmin={profile.role === "admin"} />
                 </div>
               </div>
             ) : (
@@ -1028,6 +1030,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                           <Download /> Download finished ad
                         </Button>
                       </div>
+                      <EditNotes boardId={initial.id} target="final" canEdit={canEdit} isAdmin={profile.role === "admin"} />
                     </div>
                   </div>
                 ) : (

@@ -199,13 +199,16 @@ export type AvatarAssembly = {
   duration_s: number;
   chunk_ids: string[];
   /** Where each clip was cut (seconds into the clip) so the held pose after the line is dropped. */
-  trims: { chunk_id: string; cut_s: number; source_s: number }[];
+  trims: { chunk_id: string; cut_s: number; source_s: number; head_s?: number }[];
   /** Word timestamps from speech-to-text on this track (cached; the overlay and captions use them). */
   words?: TranscriptWord[];
   created_at: string;
 };
 
 export type TranscriptWord = { text: string; start: number; end: number };
+
+/** A note the editor left on an assembled output (A-roll track or finished ad). */
+export type EditNote = { id: string; target_type: "aroll" | "final"; note: string; at_s: number | null; created_at: string; user_id: string | null };
 
 /** The finished ad: B-roll laid over the A-roll track. */
 export type FinalAssembly = {

@@ -1,6 +1,7 @@
 import { assembleFinal } from "@/lib/assemble";
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { canEditBoard, getBoardForActor, loadBoardWithBeats } from "@/lib/boards";
+import { cutRulesFrom, getSettings } from "@/lib/settings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { transcribeWords } from "@/lib/transcribe";
 import type { AvatarAssembly } from "@/lib/types";
@@ -28,7 +29,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
       transcribed = true;
     }
     const full = await loadBoardWithBeats({ ...board, avatar_assembly: track });
-    const assembly = await assembleFinal({ ...board, avatar_assembly: track }, full.beats, full.generations, track.words!, actor.profile.id);
+    const assembly = await assembleFinal({ ...board, avatar_assembly: track }, full.beats, full.generations, track.words!, actor.profile.id, cutRulesFrom(await getSettings()));
     return Response.json({ assembly, avatar_assembly: track, transcribed });
   });
 }

@@ -1,6 +1,7 @@
 import { assembleAroll } from "@/lib/assemble";
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { canEditBoard, getBoardForActor, loadBoardWithBeats } from "@/lib/boards";
+import { cutRulesFrom, getSettings } from "@/lib/settings";
 
 export const maxDuration = 300;
 
@@ -13,7 +14,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
     if (!canEditBoard(actor, board)) throw new HttpError(403, "Only the board's owner or an admin can assemble");
     const full = await loadBoardWithBeats(board);
     if (!full.avatar_chunks.length) throw new HttpError(422, "Chunk the script and generate the clips first");
-    const assembly = await assembleAroll(board, full.avatar_chunks, full.generations, actor.profile.id);
+    const assembly = await assembleAroll(board, full.avatar_chunks, full.generations, actor.profile.id, cutRulesFrom(await getSettings()));
     return Response.json({ assembly });
   });
 }
