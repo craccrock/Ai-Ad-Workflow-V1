@@ -38,6 +38,8 @@ export function AvatarCard({
   onShowGeneration,
   onDeleteTake,
   onFeedback,
+  onApprove,
+  approved,
 }: {
   chunk: AvatarChunk;
   index: number;
@@ -53,6 +55,8 @@ export function AvatarCard({
   onShowGeneration: (id: string) => void;
   onDeleteTake: (id: string) => Promise<void>;
   onFeedback: (id: string, tag: LearningTag, note: string) => Promise<void>;
+  onApprove: (id: string, on: boolean) => Promise<void>;
+  approved: Set<string>;
 }) {
   const [repromptOpen, setRepromptOpen] = useState(false);
   const [reprompting, setReprompting] = useState(false);
@@ -165,7 +169,7 @@ export function AvatarCard({
               </a>
             ) : null}
           </div>
-          <TakeNav takes={takes} current={generation?.id ?? null} onShow={onShowGeneration} onDelete={canEdit && !busy ? onDeleteTake : undefined} onThumbsDown={canEdit ? onFeedback : undefined} label="clip" />
+          <TakeNav takes={takes} current={generation?.id ?? null} onShow={onShowGeneration} onDelete={canEdit && !busy ? onDeleteTake : undefined} onThumbsDown={canEdit ? onFeedback : undefined} onThumbsUp={canEdit ? onApprove : undefined} approved={approved} label="clip" />
           <Button
             variant={generation?.status === "completed" ? "outline" : "gold"}
             size="sm"

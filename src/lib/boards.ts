@@ -1,5 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { approvedExamplesBlock } from "@/lib/approved-examples";
 import { HttpError, type Actor } from "@/lib/auth";
 import { serializeGeneration } from "@/lib/generations";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -126,7 +127,7 @@ export async function splitBoard(board: Board, subject: Subject | null): Promise
   const system = settings.board_brain_prompt
     .replace("{{SUBJECT_LOCK}}", subjectLock)
     .replace("{{LIBRARY_INDEX}}", lines.length ? `\n${lines.join("\n")}` : "(library is empty)")
-    .replace("{{SCRIPT}}", `\n${board.script.trim()}`);
+    .replace("{{SCRIPT}}", `\n${board.script.trim()}`) + (await approvedExamplesBlock("beat_image"));
 
   const client = new Anthropic();
   const stream = client.messages.stream({
@@ -239,7 +240,7 @@ Rules:
 SUBJECT LOCK: ${subjectLock}
 STYLE LOCKS:
 ${styleLocks}
-REFERENCE IMAGES ATTACHED: ${slots}`;
+REFERENCE IMAGES ATTACHED: ${slots}${await approvedExamplesBlock("beat_image")}`;
 
   const currentPrompt = fresh ? "(none — the editor asked to START FROM SCRATCH. Ignore whatever prompt existed before; build a brand-new prompt from the voiceover, the direction and the reference images only.)" : beat.image_prompt.trim() || "(empty)";
   const user = `VOICEOVER FOR THIS BEAT: ${beat.vo || "(none)"}

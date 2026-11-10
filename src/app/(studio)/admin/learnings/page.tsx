@@ -25,8 +25,9 @@ const KIND_LABEL: Record<string, string> = {
   take_select: "Picked take",
   thumbs_down: "Thumbs down",
   keeper: "Keeper (assembled)",
+  thumbs_up: "Thumbs up (approved)",
 };
-const KIND_TONE: Record<string, "default" | "gold" | "success" | "danger"> = { keeper: "success", take_select: "gold", reprompt: "default", reroll: "danger", take_delete: "danger", thumbs_down: "danger" };
+const KIND_TONE: Record<string, "default" | "gold" | "success" | "danger"> = { keeper: "success", thumbs_up: "success", take_select: "gold", reprompt: "default", reroll: "danger", take_delete: "danger", thumbs_down: "danger" };
 const TARGET_LABEL: Record<string, string> = { beat_image: "B-roll image", beat_video: "B-roll clip", chunk: "Avatar clip" };
 
 const snip = (s: string | null | undefined, n = 160) => (s ? (s.length > n ? `${s.slice(0, n)}…` : s) : "");

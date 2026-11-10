@@ -125,6 +125,17 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   const [assemblingFinal, setAssemblingFinal] = useState(false);
   const [runAll, setRunAll] = useState<{ total: number; done: number } | null>(null);
   const stopRef = useRef(false);
+  /** Generation ids the editor has given a thumbs-up on this board. */
+  const [approved, setApproved] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    let alive = true;
+    void api<{ approved: string[] }>(`/api/boards/${initial.id}/feedback?approved=1`)
+      .then((r) => alive && setApproved(new Set(r.approved)))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [initial.id]);
   const beatsRef = useRef(beats);
   useEffect(() => {
     beatsRef.current = beats;
@@ -648,6 +659,17 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   }
 
   /** Thumbs-down with a reason: a learning event against the prompt that made the take. Nothing is changed. */
+  /** Thumbs-up (or taking it back): the approved take's prompt becomes an example the prompt writers read. */
+  async function approve(target_type: "beat_image" | "beat_video" | "chunk", target_id: string, generation_id: string, on: boolean) {
+    await api(`/api/boards/${initial.id}/feedback`, { method: "POST", json: { target_type, target_id, generation_id, vote: on ? "up" : "clear" } });
+    setApproved((cur) => {
+      const next = new Set(cur);
+      if (on) next.add(generation_id);
+      else next.delete(generation_id);
+      return next;
+    });
+  }
+
   async function feedback(target_type: "beat_image" | "beat_video" | "chunk", target_id: string, generation_id: string, tag: LearningTag, note: string) {
     await api(`/api/boards/${initial.id}/feedback`, { method: "POST", json: { target_type, target_id, generation_id, tag, note: note || undefined } });
   }
@@ -964,6 +986,8 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                     onShowGeneration={(id) => void showChunkGeneration(chunk.id, id)}
                     onDeleteTake={(id) => deleteChunkTake(chunk.id, id)}
                     onFeedback={(id, tag, note) => feedback("chunk", chunk.id, id, tag, note)}
+                    onApprove={(id, on) => approve("chunk", chunk.id, id, on)}
+                    approved={approved}
                   />
                 ))}
               </div>
@@ -1139,6 +1163,8 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 onDeleteTake={(id) => deleteTake(beat.id, id)}
                 onUploadTake={(m) => uploadTake(beat.id, m)}
                 onFeedback={(kind, id, tag, note) => feedback(kind === "image" ? "beat_image" : "beat_video", beat.id, id, tag, note)}
+                onApprove={(kind, id, on) => approve(kind === "image" ? "beat_image" : "beat_video", beat.id, id, on)}
+                approved={approved}
               />
             ))}
           </div>

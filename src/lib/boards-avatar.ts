@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { AVATAR_SYLLABLES_PER_SECOND, avatarDurationFor, DEFAULT_AVATAR_MODEL, packParagraph, speechSeconds, wordCount } from "@/config/avatar";
 import { getModel } from "@/config/models.config";
 import { HttpError } from "@/lib/auth";
+import { approvedExamplesBlock } from "@/lib/approved-examples";
 import { parseBrainJson, type BrainOutput } from "@/lib/boards";
 import { getSettings } from "@/lib/settings";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -137,7 +138,7 @@ export async function writeAvatarPrompts(
   content.push({ type: "text", text: "Produce the JSON for the BEATS." });
 
   const message = await anthropic()
-    .messages.stream({ model: settings.board_brain_model, max_tokens: 24000, system, messages: [{ role: "user", content }] })
+    .messages.stream({ model: settings.board_brain_model, max_tokens: 24000, system: system + (await approvedExamplesBlock("chunk")), messages: [{ role: "user", content }] })
     .finalMessage();
   if (message.stop_reason === "refusal") throw new HttpError(502, "The brain declined these chunks");
   if (message.stop_reason === "max_tokens") throw new HttpError(502, "Too many chunks for one pass — try a smaller batch");

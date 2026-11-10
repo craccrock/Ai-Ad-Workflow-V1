@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Clapperboard, Download, ExternalLink, FolderOpen, ImagePlus, Loader2, Merge, Plus, RotateCw, Scissors, Sparkles, ThumbsDown, Trash2, TriangleAlert, Upload, Wand2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Clapperboard, Download, ExternalLink, FolderOpen, ImagePlus, Loader2, Merge, Plus, RotateCw, Scissors, Sparkles, ThumbsDown, ThumbsUp, Trash2, TriangleAlert, Upload, Wand2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { LibraryPicker } from "@/components/library/library-picker";
@@ -338,6 +338,8 @@ export function TakeNav({
   onShow,
   onDelete,
   onThumbsDown,
+  onThumbsUp,
+  approved,
   label,
 }: {
   takes: string[];
@@ -346,6 +348,10 @@ export function TakeNav({
   onDelete?: (id: string) => Promise<void>;
   /** Mark the current take as bad, with a reason. Pure learning signal: nothing is deleted. */
   onThumbsDown?: (id: string, tag: LearningTag, note: string) => Promise<void>;
+  /** Approve the current take ("this is what we're going for"), or take the approval back. Feeds the prompt writers. */
+  onThumbsUp?: (id: string, on: boolean) => Promise<void>;
+  /** Generation ids the editor has approved on this board. */
+  approved?: Set<string>;
   label: string;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -357,7 +363,22 @@ export function TakeNav({
   const i = current ? takes.indexOf(current) : -1;
   const canDelete = Boolean(onDelete) && i >= 0;
   const canFlag = Boolean(onThumbsDown) && i >= 0;
-  if (takes.length < 2 && !canDelete && !canFlag) return null;
+  const canApprove = Boolean(onThumbsUp) && i >= 0;
+  const isApproved = Boolean(current && approved?.has(current));
+  const [approving, setApproving] = useState(false);
+  if (takes.length < 2 && !canDelete && !canFlag && !canApprove) return null;
+  const toggleApprove = async () => {
+    if (!onThumbsUp || !current || approving) return;
+    setApproving(true);
+    try {
+      await onThumbsUp(current, !isApproved);
+      if (!isApproved) toast.success("Approved", { description: "Saved as the standard. The prompt writers read it from now on.", duration: 2500 });
+    } catch (e) {
+      toast.error("Couldn't save that", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setApproving(false);
+    }
+  };
   const sendFlag = async () => {
     if (!onThumbsDown || !current) return;
     setSending(true);
@@ -391,6 +412,11 @@ export function TakeNav({
       </button>
       <span className="flex items-center gap-1.5 font-mono">
         {label} {i + 1}/{takes.length}
+        {canApprove ? (
+          <button type="button" disabled={approving} onClick={() => void toggleApprove()} className={cn("rounded p-0.5", isApproved ? "text-gold" : "text-muted hover:text-gold")} title={isApproved ? `Approved. Click to take it back.` : `This ${label} is what we're going for: teach the writers with it`} aria-label={`Thumbs up this ${label}`} aria-pressed={isApproved}>
+            <ThumbsUp className={cn("size-3.5", isApproved && "fill-gold/30")} />
+          </button>
+        ) : null}
         {canFlag ? (
           <button type="button" onClick={() => setFlagging(true)} className="rounded p-0.5 text-muted hover:text-gold" title={`Mark this ${label} as bad (with a reason) — it stays, the system learns`} aria-label={`Thumbs down this ${label}`}>
             <ThumbsDown className="size-3.5" />
@@ -476,6 +502,8 @@ export function BeatCard({
   onDeleteTake,
   onUploadTake,
   onFeedback,
+  onApprove,
+  approved,
 }: {
   beat: Beat;
   index: number;
@@ -511,6 +539,8 @@ export function BeatCard({
   onUploadTake: (media: ApiMedia) => Promise<void>;
   /** Thumbs-down on a take (image) or clip (video) with a reason tag. */
   onFeedback: (kind: "image" | "video", id: string, tag: LearningTag, note: string) => Promise<void>;
+  onApprove: (kind: "image" | "video", id: string, on: boolean) => Promise<void>;
+  approved: Set<string>;
 }) {
   const [splitOpen, setSplitOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -828,7 +858,7 @@ export function BeatCard({
               </a>
             ) : null}
           </div>
-          <TakeNav takes={takes} current={generation?.id ?? null} onShow={onShowGeneration} onDelete={canEdit && !busy ? onDeleteTake : undefined} onThumbsDown={canEdit ? (id, tag, note) => onFeedback("image", id, tag, note) : undefined} label="take" />
+          <TakeNav takes={takes} current={generation?.id ?? null} onShow={onShowGeneration} onDelete={canEdit && !busy ? onDeleteTake : undefined} onThumbsDown={canEdit ? (id, tag, note) => onFeedback("image", id, tag, note) : undefined} onThumbsUp={canEdit ? (id, on) => onApprove("image", id, on) : undefined} approved={approved} label="take" />
           {broll ? (
             <Button variant={generation?.status === "completed" ? "outline" : "gold"} size="sm" disabled={!canEdit || busy || !beat.image_prompt.trim()} onClick={onGenerate}>
               {busy ? <Loader2 className="animate-spin" /> : generation ? <RotateCw /> : <Sparkles />}
@@ -877,7 +907,7 @@ export function BeatCard({
                   </a>
                 ) : null}
               </div>
-              <TakeNav takes={videoTakes} current={videoGeneration?.id ?? null} onShow={onShowVideoGeneration} onDelete={canEdit && !videoBusy ? onDeleteTake : undefined} onThumbsDown={canEdit ? (id, tag, note) => onFeedback("video", id, tag, note) : undefined} label="clip" />
+              <TakeNav takes={videoTakes} current={videoGeneration?.id ?? null} onShow={onShowVideoGeneration} onDelete={canEdit && !videoBusy ? onDeleteTake : undefined} onThumbsDown={canEdit ? (id, tag, note) => onFeedback("video", id, tag, note) : undefined} onThumbsUp={canEdit ? (id, on) => onApprove("video", id, on) : undefined} approved={approved} label="clip" />
               <Button
                 variant={videoGeneration?.status === "completed" ? "outline" : "gold"}
                 size="sm"
