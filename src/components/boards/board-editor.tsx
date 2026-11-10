@@ -209,6 +209,9 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
 
   const update = useCallback(
     (next: Beat[]) => {
+      // Keep the ref current at once: handlers that run before the next render (a patch right after a reprompt
+      // lands) must build on this list, not on the one from their own render, or they write the old prompt back.
+      beatsRef.current = next;
       setBeats(next);
       scheduleSave(next);
     },
@@ -232,7 +235,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
 
   // ─── beat operations ──────────────────────────────────────────────────────
 
-  const patchBeat = (id: string, patch: BeatPatch) => update(beats.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+  const patchBeat = (id: string, patch: BeatPatch) => update(beatsRef.current.map((b) => (b.id === id ? { ...b, ...patch } : b)));
   const splitBeat = (id: string, parts: string[]) => {
     const i = beats.findIndex((b) => b.id === id);
     if (i < 0) return;

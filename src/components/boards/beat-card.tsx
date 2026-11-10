@@ -528,6 +528,7 @@ export function BeatCard({
         ids.forEach(onMedia);
         const cur = beat.extra_media_ids ?? [];
         const next = [...cur, ...ids.map((m) => m.id).filter((id) => !cur.includes(id))].slice(0, 5);
+        // Only the extras go in this patch; the editor applies it on top of the freshly rewritten prompt.
         if (next.length !== cur.length) onPatch({ extra_media_ids: next });
       }
       setRepromptOpen(false);
@@ -592,7 +593,8 @@ export function BeatCard({
       setPendingExtras((n) => Math.max(0, n - 1));
     }
   };
-  const fixedCount = 3;
+  // Extras are numbered the way the image model receives them: after whichever of subject / pose / setting are filled.
+  const fixedCount = (beat.use_subject_lock && subjectImage ? 1 : 0) + (beat.pose_media_id && media[beat.pose_media_id] ? 1 : 0) + (beat.setting_media_id && media[beat.setting_media_id] ? 1 : 0);
 
   return (
     <article className={cn("rounded-[8px] border bg-surface", broll ? "border-hairline" : "border-hairline/60 opacity-80")} id={`beat-${beat.id}`}>

@@ -234,6 +234,7 @@ Rules:
 - If an image is attached, it is what the CURRENT PROMPT actually produced. Study it first and list what went wrong against the intent and the direction (wrong person or skin tone, extra or fused fingers, warped anatomy, wrong framing, missing props or wardrobe, text, stylised or CGI look, wrong setting). Then write the new prompt so those faults cannot recur: state the correct version explicitly and positively (what the hands do, how many people, exact wardrobe, exact framing), and keep everything that was already right.
 - If EXAMPLE images are attached, they show the look the editor is aiming for (realism, lighting, framing, skin and surface texture, colour, lens feel). Translate those qualities into concrete words in the new prompt, applying the direction (e.g. "like this but the camera a little farther back"). Examples are NOT sent to the image model unless the editor also adds them as references, so the words must carry the look.
 - Output: if a result image was attached, the first line is "DIAGNOSIS: <one or two plain sentences>", then a blank line, then the prompt. Otherwise output only the prompt text.
+- Never write a note, caveat or explanation to the editor inside the prompt: every word after the optional first line is sent to the image model. If you departed from the direction in any way, say so in one sentence on a first line starting "NOTE: ", then a blank line, then the prompt.
 
 SUBJECT LOCK: ${subjectLock}
 STYLE LOCKS:
@@ -266,7 +267,7 @@ Write the new prompt.`;
   if (message.stop_reason === "refusal") throw new HttpError(502, "The brain declined this direction");
   let text = message.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("").trim();
   let diagnosis: string | undefined;
-  const m = text.match(/^DIAGNOSIS:\s*([\s\S]*?)\n\s*\n([\s\S]*)$/);
+  const m = text.match(/^(?:DIAGNOSIS|NOTE|Note for the editor):\s*([\s\S]*?)\n\s*\n([\s\S]*)$/i);
   if (m) {
     diagnosis = m[1].trim();
     text = m[2].trim();
