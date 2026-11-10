@@ -702,6 +702,20 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   }
 
   /** Deletes one take (image or clip) from a beat, for good. The server picks the neighbouring take as current. */
+  /** Puts the editor's own image on a beat as its current take (recorded server-side as a finished, free take). */
+  async function uploadTake(beatId: string, m: ApiMedia) {
+    const list = await flush();
+    const beat = list.find((b) => b.id === beatId) ?? list[beatsRef.current.findIndex((b) => b.id === beatId)];
+    if (!beat || beat.id.startsWith("new-")) throw new Error("Beat not saved yet. Try again in a moment.");
+    const res = await api<{ generation: ApiGeneration; generation_id: string; generation_ids: string[] }>(`/api/boards/${initial.id}/beats/${beat.id}/takes/upload`, { method: "POST", json: { media_id: m.id } });
+    setGens((cur) => ({ ...cur, [res.generation.id]: res.generation }));
+    setMedia((cur) => ({ ...cur, [m.id]: m }));
+    const next = beatsRef.current.map((b) => (b.id === beat.id ? { ...b, generation_id: res.generation_id, generation_ids: res.generation_ids } : b));
+    beatsRef.current = next;
+    setBeats(next);
+    toast.success("Your image is now this beat's take", { description: "Animate uses it as the starting frame." });
+  }
+
   async function deleteTake(beatId: string, genId: string) {
     const res = await api<{ kind: "image" | "video" } & Partial<Pick<Beat, "generation_id" | "generation_ids" | "video_generation_id" | "video_generation_ids">>>(`/api/boards/${initial.id}/beats/${beatId}/takes/${genId}`, { method: "DELETE" });
     const { kind, ...patch } = res;
@@ -1123,6 +1137,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 onRepromptVideo={(direction, attach, examples, fresh) => repromptVideo(beat.id, direction, attach, examples, fresh)}
                 onShowVideoGeneration={(id) => void showGeneration(beat.id, id, "video")}
                 onDeleteTake={(id) => deleteTake(beat.id, id)}
+                onUploadTake={(m) => uploadTake(beat.id, m)}
                 onFeedback={(kind, id, tag, note) => feedback(kind === "image" ? "beat_image" : "beat_video", beat.id, id, tag, note)}
               />
             ))}

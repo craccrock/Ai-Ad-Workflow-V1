@@ -25,6 +25,7 @@ export async function recopyProviderHosted({ limit = 5 }: { limit?: number } = {
     .select("id, user_id, result_url, result_metadata, media_type")
     .eq("status", "completed")
     .is("result_storage_path", null)
+    .neq("provider", "upload") // the editor's own uploads already live in our media library
     .not("result_url", "is", null)
     .gte("created_at", since)
     .order("created_at", { ascending: false })

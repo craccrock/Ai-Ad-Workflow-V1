@@ -1100,7 +1100,8 @@ export const categoryLabels: Record<Category, string> = {
 
 export const categoryOrder: Category[] = ["video", "avatar", "image", "audio", "upscale"];
 
-export const providerLabels: Record<Provider | "fal", string> = {
+export const providerLabels: Record<Provider | "fal" | "upload", string> = {
+  upload: "Uploaded",
   elevenlabs: "ElevenLabs",
   kie: "Kie.ai",
   google: "Google direct",

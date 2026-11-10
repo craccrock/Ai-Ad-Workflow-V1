@@ -474,6 +474,7 @@ export function BeatCard({
   onRepromptVideo,
   onShowVideoGeneration,
   onDeleteTake,
+  onUploadTake,
   onFeedback,
 }: {
   beat: Beat;
@@ -506,6 +507,8 @@ export function BeatCard({
   onShowVideoGeneration: (id: string) => void;
   /** Deletes a take or clip for good (TakeNav asks first). */
   onDeleteTake: (id: string) => Promise<void>;
+  /** Puts an image the editor made elsewhere on the beat as its current take. */
+  onUploadTake: (media: ApiMedia) => Promise<void>;
   /** Thumbs-down on a take (image) or clip (video) with a reason tag. */
   onFeedback: (kind: "image" | "video", id: string, tag: LearningTag, note: string) => Promise<void>;
 }) {
@@ -518,6 +521,24 @@ export function BeatCard({
   const [videoReprompting, setVideoReprompting] = useState(false);
   /** Empty extra slots opened with "Add reference" that have no image yet. */
   const [pendingExtras, setPendingExtras] = useState(0);
+  const ownFileRef = useRef<HTMLInputElement>(null);
+  const [ownPicker, setOwnPicker] = useState(false);
+  const [ownBusy, setOwnBusy] = useState(false);
+  const [ownDrag, setOwnDrag] = useState(false);
+
+  /** Use an image made outside the studio as this beat's take: upload the file (or pick it from the library). */
+  async function applyOwnImage(source: File | ApiMedia) {
+    setOwnBusy(true);
+    try {
+      const m = source instanceof File ? await uploadMedia(source, userId) : source;
+      if (m.type !== "image") throw new Error("That file isn't an image");
+      await onUploadTake(m);
+    } catch (e) {
+      toast.error("Couldn't use that image", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setOwnBusy(false);
+    }
+  }
 
   async function submitReprompt(direction: string, attach: boolean, examples: ExampleImage[], addToRefs: boolean, fresh: boolean) {
     setReprompting(true);
@@ -784,8 +805,23 @@ export function BeatCard({
         </div>
 
         <div className="flex flex-col gap-2">
-          <div className="relative aspect-[9/16] overflow-hidden rounded-[6px] bg-[#18223d]">
-            <Result gen={generation} generating={generating} kind="image" />
+          <div
+            className={cn("relative aspect-[9/16] overflow-hidden rounded-[6px] bg-[#18223d]", ownDrag && "ring-2 ring-gold")}
+            onDragOver={(e) => {
+              if (!canEdit || !e.dataTransfer.types.includes("Files")) return;
+              e.preventDefault();
+              setOwnDrag(true);
+            }}
+            onDragLeave={() => setOwnDrag(false)}
+            onDrop={(e) => {
+              setOwnDrag(false);
+              const f = Array.from(e.dataTransfer.files).find((x) => x.type.startsWith("image/"));
+              if (!canEdit || !f) return;
+              e.preventDefault();
+              void applyOwnImage(f);
+            }}
+          >
+            <Result gen={generation} generating={generating || ownBusy} kind="image" />
             {generation?.result_url && generation.status === "completed" ? (
               <a href={generation.result_url} target="_blank" rel="noopener" className="absolute right-1.5 top-1.5 rounded-full bg-navy/80 p-1.5 text-cream-2 hover:text-cream" title="Open full size">
                 <ExternalLink className="size-3.5" />
@@ -798,6 +834,28 @@ export function BeatCard({
               {busy ? <Loader2 className="animate-spin" /> : generation ? <RotateCw /> : <Sparkles />}
               {busy ? "Generating…" : generation ? "Re-roll" : "Generate"}
             </Button>
+          ) : null}
+          {canEdit ? (
+            <div className="grid grid-cols-2 gap-1.5" title="Made the image somewhere else? Put it on this beat as the current take. You can also drop a file onto the frame above.">
+              <Button variant="outline" size="sm" disabled={ownBusy || busy} onClick={() => ownFileRef.current?.click()}>
+                {ownBusy ? <Loader2 className="animate-spin" /> : <Upload />} My image
+              </Button>
+              <Button variant="outline" size="sm" disabled={ownBusy || busy} onClick={() => setOwnPicker(true)}>
+                <FolderOpen /> Library
+              </Button>
+              <input
+                ref={ownFileRef}
+                type="file"
+                accept={ACCEPT.image}
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void applyOwnImage(f);
+                  e.target.value = "";
+                }}
+              />
+              <LibraryPicker type="image" open={ownPicker} onOpenChange={setOwnPicker} onPick={(m) => void applyOwnImage(m)} title="Use a library image as this beat's take" />
+            </div>
           ) : null}
           {generation?.status === "completed" && generation.result_url ? (
             <Button variant="ghost" size="sm" onClick={() => downloadFile(generation.result_url!, `beat-${index + 1}.png`)}>

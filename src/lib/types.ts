@@ -19,7 +19,7 @@ export type Generation = {
   id: string;
   user_id: string;
   batch_id: string | null;
-  provider: "kie" | "google" | "fal" | "elevenlabs";
+  provider: "kie" | "google" | "fal" | "elevenlabs" | "upload";
   provider_request_id: string | null;
   provider_endpoint: string | null;
   model: string;
