@@ -12,6 +12,7 @@ export function Nav({ profile }: { profile: Profile }) {
   const pathname = usePathname();
   const links = [
     { href: "/", label: "Studio" },
+    { href: "/starter", label: "Starter" },
     { href: "/boards", label: "Boards" },
     { href: "/library", label: "Library" },
     { href: "/training", label: "Training" },

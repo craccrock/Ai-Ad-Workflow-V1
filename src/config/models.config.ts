@@ -573,6 +573,33 @@ export const models: ModelConfig[] = [
       }),
   },
   {
+    id: "nano-banana-2-1",
+    provider: "kie",
+    providerModelId: "nano-banana-2-1",
+    name: "Nano Banana 2.1",
+    description: "Newest fast Google image model. Strong multi-reference edits, half the price of Nano Banana 2.",
+    category: "image",
+    mediaType: "image",
+    inputTypes: ["text-to-image", "image-edit"],
+    requiresPrompt: true,
+    pricing: { unit: "per_image", rates: { "1K": cr(4), "2K": cr(6), "4K": cr(9) } },
+    options: {
+      resolutions: ["1K", "2K", "4K"],
+      defaultResolution: "1K",
+      aspectRatios: NANO_BANANA_ASPECTS,
+      defaultAspectRatio: "1:1",
+      maxImages: 10,
+    },
+    mapInput: (p) =>
+      withExtra(p, {
+        prompt: p.prompt,
+        image_input: p.image_urls,
+        aspect_ratio: p.aspect_ratio,
+        resolution: p.resolution,
+        output_format: "png",
+      }),
+  },
+  {
     id: "nano-banana-2-lite",
     provider: "kie",
     providerModelId: "nano-banana-2-lite",
