@@ -308,7 +308,9 @@ function seedance(spec: SeedanceSpec): ModelConfig {
         reference_audio_urls: nonEmpty(p.reference_audio_urls),
         generate_audio: Boolean(p.generate_audio),
         resolution: p.resolution,
-        aspect_ratio: p.aspect_ratio,
+        // Seedance 2.5 refuses a fixed ratio once a start or end frame is attached (Kie 422): the clip takes the
+        // frame's own shape, so "adaptive" is the only value it accepts there.
+        aspect_ratio: spec.model.endsWith("seedance-2-5") && (p.start_frame_url || p.end_frame_url) ? "adaptive" : p.aspect_ratio,
         duration: p.duration,
       }),
   };
