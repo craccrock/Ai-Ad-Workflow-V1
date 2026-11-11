@@ -12,7 +12,7 @@ export type AppSettings = {
   board_brain_prompt: string;
   /** Claude model that runs the splitter. */
   board_brain_model: string;
-  /** How many jobs the Generate-all / Animate-all pools keep in flight (Kie caps at 10). */
+  /** How many jobs the Generate-all / Animate-all pools keep in flight (Kie caps at 20). */
   board_concurrency: number;
   /** Image model new boards start with. */
   board_default_model: string;
@@ -38,7 +38,7 @@ export type AppSettings = {
 export const DEFAULT_SETTINGS: AppSettings = {
   board_brain_prompt: DEFAULT_BRAIN_PROMPT,
   board_brain_model: "claude-opus-5-5",
-  board_concurrency: 10, // Kie runs 10 jobs at once; the pool keeps that many in flight and starts the next as each finishes
+  board_concurrency: 20, // Kie runs 20 jobs at once; the pool keeps that many in flight and starts the next as each finishes
   board_default_model: "nano-banana-pro",
   board_video_prompt: DEFAULT_VIDEO_PROMPT,
   board_default_video_model: "kling-3-pro",

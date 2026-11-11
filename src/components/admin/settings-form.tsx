@@ -58,7 +58,7 @@ export function SettingsForm({ initial, defaultPrompt, defaultVideoPrompt, defau
         </div>
         <div>
           <Label className="mb-1.5">Generate-all concurrency</Label>
-          <Input type="number" min={1} max={10} value={form.board_concurrency} onChange={(e) => setForm({ ...form, board_concurrency: Math.max(1, Math.min(10, Number(e.target.value) || 1)) })} />
+          <Input type="number" min={1} max={20} value={form.board_concurrency} onChange={(e) => setForm({ ...form, board_concurrency: Math.max(1, Math.min(20, Number(e.target.value) || 1)) })} />
           <p className="mt-1 text-[11px] text-muted">How many images render at the same time.</p>
         </div>
         <div>

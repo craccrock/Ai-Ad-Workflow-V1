@@ -27,7 +27,7 @@ export async function GET(request: Request) {
 const schema = z.object({
   board_brain_prompt: z.string().min(50).max(60000).optional(),
   board_brain_model: z.string().min(3).max(80).optional(),
-  board_concurrency: z.number().int().min(1).max(10).optional(), // Kie allows 10 concurrent jobs
+  board_concurrency: z.number().int().min(1).max(20).optional(), // Kie allows 20 concurrent jobs
   board_default_model: z.string().min(1).max(80).optional(),
   board_video_prompt: z.string().min(50).max(60000).optional(),
   board_default_video_model: z.string().min(1).max(80).optional(),
