@@ -43,6 +43,9 @@ export type Generation = {
   /** Set when the primary provider failed/stalled and the job re-ran on the backup. */
   fallback_reason: string | null;
   fallback_at: string | null;
+  /** The board this job was made on, and which phase of it; null for Studio, Starter and API jobs. */
+  board_id?: string | null;
+  board_phase?: "image" | "broll" | "aroll" | null;
   finalizing_at: string | null;
   last_polled_at: string | null;
   created_at: string;

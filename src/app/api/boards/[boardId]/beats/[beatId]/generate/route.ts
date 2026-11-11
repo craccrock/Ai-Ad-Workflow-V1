@@ -43,7 +43,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
       variants: 1,
       is_shared: true,
       dry_run: parsed.data.dry_run,
-    });
+    }, { board: { id: board.id, phase: "image" } });
     if (parsed.data.dry_run) return Response.json({ dry_run: true, model: model.id, estimate, references: refs });
 
     const gen = rows[0];

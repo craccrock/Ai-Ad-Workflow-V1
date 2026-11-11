@@ -17,6 +17,7 @@ import { cn, formatUsd } from "@/lib/utils";
 import { AvatarCard, MIN_AVATAR_PROMPT_CHARS, type ChunkPatch } from "./avatar-card";
 import { BeatCard, clipCost, fetchGeneration, videoModels, videoOptionLabel, type BeatPatch } from "./beat-card";
 import { CaptionsPanel } from "./captions-panel";
+import { CostBreakdown } from "./cost-breakdown";
 import { EditNotes } from "./edit-notes";
 import { RefSlot } from "./ref-slot";
 import { SubjectPicker } from "./subject-picker";
@@ -869,10 +870,13 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
               { value: "avatar", label: `Avatar · ${chunks.length} chunks` },
             ]}
           />
+          <div className="ml-auto">
+            <CostBreakdown boardId={initial.id} refreshKey={Object.keys(gens).length} />
+          </div>
           {(() => {
             const s = tab === "avatar" ? chunkSave : saveState;
             return (
-              <span className={cn("ml-auto flex items-center gap-1 text-[11px]", s === "saved" ? "text-muted" : "text-gold")}>
+              <span className={cn("flex items-center gap-1 text-[11px]", s === "saved" ? "text-muted" : "text-gold")}>
                 {s === "saving" ? <Loader2 className="size-3 animate-spin" /> : s === "saved" ? <Check className="size-3" /> : null}
                 {s === "saving" ? "Saving" : s === "saved" ? "Saved" : "Unsaved"}
               </span>

@@ -47,7 +47,7 @@ export type GenerateBody = z.infer<typeof generateBodySchema>;
  * A caller that waits for results inside the same request needs it: `after()` callbacks only run
  * once the response has been sent, so waiting on a job that hasn't been dispatched deadlocks.
  */
-export async function createGenerations(actor: Actor, body: GenerateBody, opts: { dispatch?: "after" | "inline" } = {}) {
+export async function createGenerations(actor: Actor, body: GenerateBody, opts: { dispatch?: "after" | "inline"; board?: { id: string; phase: "image" | "broll" | "aroll" } } = {}) {
   const model = getModel(body.model);
   if (!model) throw new HttpError(400, `Unknown model "${body.model}". GET /api/models for the list.`);
 
@@ -85,6 +85,9 @@ export async function createGenerations(actor: Actor, body: GenerateBody, opts: 
     is_shared: body.is_shared,
     source: actor.via === "api_key" ? ("api" as const) : ("web" as const),
     api_key_id: actor.apiKeyId,
+    // Ties the job to its board, so the board's cost breakdown still counts it after the take is deleted.
+    board_id: opts.board?.id ?? null,
+    board_phase: opts.board?.phase ?? null,
     created_at: now,
   }));
 
