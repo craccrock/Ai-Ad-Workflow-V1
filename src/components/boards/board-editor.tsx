@@ -110,6 +110,8 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   const [gens, setGens] = useState<Record<string, ApiGeneration>>(initial.generations);
   const [subject, setSubject] = useState<Subject | null>(initial.subject);
   const [splitting, setSplitting] = useState(false);
+  const [redoNote, setRedoNote] = useState("");
+  const [redoRemember, setRedoRemember] = useState(true);
   const [saveState, setSaveState] = useState<"saved" | "dirty" | "saving">("saved");
   const [generating, setGenerating] = useState<Set<string>>(new Set());
   const [animating, setAnimating] = useState<Set<string>>(new Set());
@@ -284,18 +286,20 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
 
   async function split() {
     if (!board.script.trim()) return toast.error("Paste a script first");
-    if (beats.length && !window.confirm(`Re-splitting replaces the current ${beats.length} beats (generated images stay in the gallery). Continue?`)) return;
+    const direction = beats.length ? redoNote.trim() : "";
+    if (beats.length && !window.confirm(`${direction ? "Redo the whole board with your direction? This" : "Re-splitting"} replaces the current ${beats.length} beats and their prompts (generated images stay in the gallery).${direction ? "" : " No direction is written in the box, so Claude will write it the same way as before."} Continue?`)) return;
     setSplitting(true);
     try {
       if (scriptTimer.current) clearTimeout(scriptTimer.current);
       await api(`/api/boards/${initial.id}`, { method: "PATCH", json: { script: board.script } });
-      const res = await api<BoardWithBeats & { usage: { input: number; output: number } }>(`/api/boards/${initial.id}/split`, { method: "POST", json: {} });
+      const res = await api<BoardWithBeats & { usage: { input: number; output: number }; remembered?: boolean }>(`/api/boards/${initial.id}/split`, { method: "POST", json: direction ? { direction, remember: redoRemember } : {} });
       setBeats(res.beats);
       setMedia((m) => ({ ...m, ...res.media }));
       setGens(res.generations);
       setBoard((b) => ({ ...b, brain_output: res.brain_output }));
       setSaveState("saved");
-      toast.success(`Split into ${res.beats.length} beats`, { description: `${res.beats.filter((b) => b.role === "broll").length} B-roll · ${res.usage.output.toLocaleString()} tokens` });
+      toast.success(direction ? `Board redone: ${res.beats.length} beats` : `Split into ${res.beats.length} beats`, { description: `${res.beats.filter((b) => b.role === "broll").length} B-roll · ${res.usage.output.toLocaleString()} tokens${res.remembered ? " · direction saved as a standing rule" : ""}` });
+      if (direction) setRedoNote("");
     } catch (e) {
       toast.error("Split failed", { description: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -781,8 +785,24 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
           <Textarea value={board.script} readOnly={!canEdit} onChange={(e) => onScript(e.target.value)} rows={14} placeholder="Paste the full ad script…" className="font-sans text-[13px]" />
           <Button variant="gold" className="mt-2 w-full" disabled={!canEdit || splitting || !board.script.trim()} onClick={split}>
             {splitting ? <Loader2 className="animate-spin" /> : <Wand2 />}
-            {splitting ? "Splitting with Claude…" : beats.length ? "Re-split into beats" : "Split into beats"}
+            {splitting ? (redoNote.trim() && beats.length ? "Redoing the board…" : "Splitting with Claude…") : beats.length ? (redoNote.trim() ? "Redo the whole board" : "Re-split into beats") : "Split into beats"}
           </Button>
+          {beats.length && canEdit ? (
+            <div className="mt-2 rounded-[6px] border border-hairline p-2">
+              <Label className="mb-1">Board came out wrong? Say why</Label>
+              <Textarea
+                value={redoNote}
+                onChange={(e) => setRedoNote(e.target.value)}
+                rows={4}
+                placeholder="What was wrong with all of it and what you want instead. Claude throws out every prompt on this board and rewrites them all with this as its top instruction."
+                className="font-sans text-[12px]"
+              />
+              <label className="mt-1.5 flex cursor-pointer items-start gap-2 text-[11px] text-cream-2">
+                <input type="checkbox" className="mt-0.5" checked={redoRemember} onChange={(e) => setRedoRemember(e.target.checked)} />
+                <span>Remember this for every future board and reprompt</span>
+              </label>
+            </div>
+          ) : null}
           {board.brain_output?.subject_lock ? <p className="mt-2 line-clamp-3 text-[11px] leading-snug text-muted" title={board.brain_output.subject_lock}>Brain&apos;s subject: {board.brain_output.subject_lock}</p> : null}
         </div>
 

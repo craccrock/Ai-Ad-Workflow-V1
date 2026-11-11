@@ -14,6 +14,7 @@ export async function GET(request: Request) {
       return Response.json({
         board_concurrency: settings.board_concurrency,
         board_default_model: settings.board_default_model,
+        image_prompt_rules: settings.image_prompt_rules,
         edit_rules: settings.edit_rules,
         cut_min_broll_s: settings.cut_min_broll_s,
         cut_min_return_s: settings.cut_min_return_s,
@@ -34,6 +35,7 @@ const schema = z.object({
   board_avatar_prompt: z.string().min(50).max(60000).optional(),
   board_default_avatar_model: z.string().min(1).max(80).optional(),
   board_pronunciations: z.string().max(20000).optional(),
+  image_prompt_rules: z.string().max(20000).optional(),
   edit_rules: z.string().max(20000).optional(),
   cut_min_broll_s: z.number().min(0.5).max(10).optional(),
   cut_min_return_s: z.number().min(0.5).max(10).optional(),

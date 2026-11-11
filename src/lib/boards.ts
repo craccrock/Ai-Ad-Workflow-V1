@@ -4,7 +4,7 @@ import { approvedExamplesBlock } from "@/lib/approved-examples";
 import { HttpError, type Actor } from "@/lib/auth";
 import { serializeGeneration } from "@/lib/generations";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getSettings } from "@/lib/settings";
+import { getSettings, imageRulesBlock } from "@/lib/settings";
 import { imageBlockFromUrl } from "@/lib/vision";
 import type { AvatarChunk, Beat, BeatRole, Board, BoardWithBeats, Generation, Media, Subject } from "@/lib/types";
 
@@ -117,7 +117,19 @@ export function parseBrainJson(text: string): BrainOutput {
  * Runs the splitter on the board's script and replaces its beats.
  * Library references the brain names are resolved to media rows so the reference slots come pre-filled.
  */
-export async function splitBoard(board: Board, subject: Subject | null): Promise<{ beats: Beat[]; brainOutput: BrainOutput; usage: { input: number; output: number } }> {
+/** What the editor said when throwing a whole board out, plus a sample of the prompts being replaced. */
+export type RedoDirection = { direction: string; rejected: { label: string; prompt: string }[] };
+
+function redoBlock(redo?: RedoDirection): string {
+  if (!redo?.direction.trim()) return "";
+  const sample = redo.rejected
+    .slice(0, 12)
+    .map((r, i) => `[${i + 1}] ${r.label}: ${r.prompt.replace(/\s+/g, " ").slice(0, 500)}`)
+    .join("\n");
+  return `\n\nTHE EDITOR REJECTED THE WHOLE PREVIOUS BOARD FOR THIS SCRIPT. This is a redo, and their direction below is the most important instruction in this prompt. Follow it on every beat, including the choice of what each shot shows, not just the wording.\n\nEDITOR'S DIRECTION:\n${redo.direction.trim()}${sample ? `\n\nPROMPTS FROM THE REJECTED BOARD (what NOT to produce again; do not reuse their shot ideas unless the direction says the idea was fine):\n${sample}` : ""}`;
+}
+
+export async function splitBoard(board: Board, subject: Subject | null, redo?: RedoDirection): Promise<{ beats: Beat[]; brainOutput: BrainOutput; usage: { input: number; output: number } }> {
   if (!process.env.ANTHROPIC_API_KEY) throw new HttpError(503, "ANTHROPIC_API_KEY is not set — add it to the environment to use the beat splitter");
   if (!board.script.trim()) throw new HttpError(400, "Paste a script first");
 
@@ -127,7 +139,7 @@ export async function splitBoard(board: Board, subject: Subject | null): Promise
   const system = settings.board_brain_prompt
     .replace("{{SUBJECT_LOCK}}", subjectLock)
     .replace("{{LIBRARY_INDEX}}", lines.length ? `\n${lines.join("\n")}` : "(library is empty)")
-    .replace("{{SCRIPT}}", `\n${board.script.trim()}`) + (await approvedExamplesBlock("beat_image"));
+    .replace("{{SCRIPT}}", `\n${board.script.trim()}`) + (await approvedExamplesBlock("beat_image")) + (await imageRulesBlock()) + redoBlock(redo);
 
   const client = new Anthropic();
   const stream = client.messages.stream({
@@ -240,7 +252,7 @@ Rules:
 SUBJECT LOCK: ${subjectLock}
 STYLE LOCKS:
 ${styleLocks}
-REFERENCE IMAGES ATTACHED: ${slots}${await approvedExamplesBlock("beat_image")}`;
+REFERENCE IMAGES ATTACHED: ${slots}${await approvedExamplesBlock("beat_image")}${await imageRulesBlock()}`;
 
   const currentPrompt = fresh ? "(none — the editor asked to START FROM SCRATCH. Ignore whatever prompt existed before; build a brand-new prompt from the voiceover, the direction and the reference images only.)" : beat.image_prompt.trim() || "(empty)";
   const user = `VOICEOVER FOR THIS BEAT: ${beat.vo || "(none)"}

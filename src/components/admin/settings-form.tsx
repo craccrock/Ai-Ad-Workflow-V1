@@ -100,6 +100,12 @@ export function SettingsForm({ initial, defaultPrompt, defaultVideoPrompt, defau
       </div>
 
       <div>
+        <Label>Standing image-prompt rules</Label>
+        <p className="mb-1.5 mt-1 text-[11px] text-muted">One rule per line. Added to the splitter and to every image reprompt, and they win over the defaults. Ticking Remember on a board redo appends here.</p>
+        <Textarea value={form.image_prompt_rules ?? ""} onChange={(e) => setForm({ ...form, image_prompt_rules: e.target.value })} rows={6} className="font-sans text-[12px] leading-relaxed" placeholder="No standing rules yet." />
+      </div>
+
+      <div>
         <div className="mb-1.5 flex items-end justify-between gap-3">
           <div>
             <Label>Brain system prompt</Label>

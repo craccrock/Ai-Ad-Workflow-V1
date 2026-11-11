@@ -26,6 +26,8 @@ export type AppSettings = {
   board_default_avatar_model: string;
   /** One per line, "term = phonetic respelling"; the avatar writer swaps these into the spoken line so the voice model says them right. */
   board_pronunciations: string;
+  /** Standing rules for the image prompt writers (splitter and reprompt), one per line; grown from "remember this" on a board redo. */
+  image_prompt_rules: string;
   /** Free-text style guide for the cutter; the notes box under each assembled output appends to it. */
   edit_rules: string;
   /** Pacing knobs the cutter applies. */
@@ -45,6 +47,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   board_avatar_prompt: DEFAULT_AVATAR_PROMPT,
   board_default_avatar_model: DEFAULT_AVATAR_MODEL,
   board_pronunciations: DEFAULT_PRONUNCIATIONS,
+  image_prompt_rules: "",
   edit_rules: DEFAULT_EDIT_RULES,
   cut_min_broll_s: DEFAULT_CUT_RULES.min_broll_s,
   cut_min_return_s: DEFAULT_CUT_RULES.min_return_s,
@@ -64,6 +67,17 @@ export async function getSettings(): Promise<AppSettings> {
     if (row.key in out) (out as Record<string, unknown>)[row.key] = row.value;
   }
   return out;
+}
+
+/** The editor's standing rules as a block for a prompt writer's system prompt; "" when there are none. */
+export async function imageRulesBlock(): Promise<string> {
+  try {
+    const rules = (await getSettings()).image_prompt_rules.trim();
+    if (!rules) return "";
+    return `\n\nSTANDING RULES FROM THE EDITOR (they apply to every board and every prompt, and they win over the defaults and examples above wherever they conflict):\n${rules}`;
+  } catch {
+    return "";
+  }
 }
 
 export async function setSettings(patch: Partial<AppSettings>, userId: string) {
