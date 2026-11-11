@@ -41,7 +41,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   board_concurrency: 20, // Kie runs 20 jobs at once; the pool keeps that many in flight and starts the next as each finishes
   board_default_model: "nano-banana-pro",
   board_video_prompt: DEFAULT_VIDEO_PROMPT,
-  board_default_video_model: "kling-3-pro",
+  board_default_video_model: "gemini-omni-1.2-flash",
   board_avatar_prompt: DEFAULT_AVATAR_PROMPT,
   board_default_avatar_model: DEFAULT_AVATAR_MODEL,
   board_pronunciations: DEFAULT_PRONUNCIATIONS,
