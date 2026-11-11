@@ -13,6 +13,7 @@ import { ImageThumb } from "@/components/ui/thumb";
 import { LEARNING_TAGS, type LearningTag } from "@/config/learning-tags";
 import { getModel, models } from "@/config/models.config";
 import { api, downloadFile, type ApiGeneration, type ApiMedia } from "@/lib/client-api";
+import { estimateCost } from "@/lib/generation-params";
 import { describeFailure, describeInFlight } from "@/lib/job-status";
 import type { Beat, Media, Subject } from "@/lib/types";
 import { ACCEPT, uploadMedia } from "@/lib/upload";
@@ -26,6 +27,36 @@ export type VideoDefaults = { model: string; duration: number; resolution: strin
 
 /** Video models that can animate a still. */
 export const videoModels = models.filter((m) => m.category === "video" && m.inputTypes.includes("image-to-video"));
+
+type VideoModel = (typeof videoModels)[number];
+
+/** The length and quality a clip really runs at: the requested ones when the model offers them, else the model's defaults. */
+export function clipSettings(model: VideoModel, duration: number | null | undefined, resolution: string | null | undefined) {
+  const o = model.options;
+  return {
+    duration: duration != null && o.durations?.includes(duration) ? duration : (o.defaultDuration ?? o.durations?.[0]),
+    resolution: o.resolutions ? (resolution && o.resolutions.includes(resolution) ? resolution : (o.defaultResolution ?? o.resolutions[0])) : undefined,
+  };
+}
+
+/** What one B-roll clip costs on this model at these settings (animated from a still, no audio), or null when unknown. */
+export function clipCost(model: VideoModel | undefined, duration: number | null | undefined, resolution: string | null | undefined): number | null {
+  if (!model) return null;
+  try {
+    const s = clipSettings(model, duration, resolution);
+    return estimateCost(model, { prompt: "x", image_urls: [], reference_image_urls: [], reference_video_urls: [], reference_audio_urls: [], elements: [], settings: {}, duration: s.duration, resolution: s.resolution, generate_audio: false }, 1).perGeneration;
+  } catch {
+    return null;
+  }
+}
+
+/** Picker label: the model's name plus what a clip costs at the length and quality it would run at. */
+export function videoOptionLabel(model: VideoModel, duration: number | null | undefined, resolution: string | null | undefined): string {
+  const name = model.tier ? `${model.name} ${model.tier}` : model.name;
+  const cost = clipCost(model, duration, resolution);
+  const s = clipSettings(model, duration, resolution);
+  return cost != null ? `${name} · ${formatUsd(cost)}${s.duration ? ` for ${s.duration}s` : ""}` : name;
+}
 
 const isInFlight = (g?: ApiGeneration | null) => g?.status === "queued" || g?.status === "processing";
 
@@ -621,6 +652,9 @@ export function BeatCard({
   const resolutions = videoModel?.options.resolutions ?? null;
   const videoDuration = beat.video_duration ?? videoDefaults.duration;
   const videoResolution = beat.video_resolution ?? videoDefaults.resolution;
+  const thisClipCost = clipCost(videoModel, videoDuration, videoResolution);
+  const thisClip = videoModel ? clipSettings(videoModel, videoDuration, videoResolution) : null;
+  const defaultVideoModel = getModel(videoDefaults.model);
 
   const pick = (key: "pose_media_id" | "setting_media_id") => (m: ApiMedia | null) => {
     if (m) onMedia(m);
@@ -809,10 +843,10 @@ export function BeatCard({
                 <div>
                   <label className="mb-1 block text-[10px] uppercase tracking-[0.08em] text-muted">Model</label>
                   <NativeSelect value={beat.video_model ?? ""} disabled={!canEdit} onChange={(e) => onPatch({ video_model: e.target.value || null, video_duration: null, video_resolution: null })} className="text-[12px]">
-                    <option value="">Board default · {(getModel(videoDefaults.model)?.tier ? `${getModel(videoDefaults.model)!.name} ${getModel(videoDefaults.model)!.tier}` : getModel(videoDefaults.model)?.name) ?? videoDefaults.model}</option>
+                    <option value="">Board default · {defaultVideoModel ? videoOptionLabel(defaultVideoModel, videoDefaults.duration, videoDefaults.resolution) : videoDefaults.model}</option>
                     {videoModels.map((m) => (
                       <option key={m.id} value={m.id}>
-                        {m.tier ? `${m.name} ${m.tier}` : m.name}
+                        {videoOptionLabel(m, videoDuration, videoResolution)}
                       </option>
                     ))}
                   </NativeSelect>
@@ -830,6 +864,13 @@ export function BeatCard({
                   </div>
                 ) : null}
               </div>
+              {thisClipCost != null ? (
+                <p className="mt-1.5 text-[11px] text-muted">
+                  This clip: about <span className="text-cream">{formatUsd(thisClipCost)}</span>
+                  {thisClip?.duration ? ` · ${thisClip.duration}s` : ""}
+                  {thisClip?.resolution ? ` at ${thisClip.resolution}` : ""} on {videoModel.tier ? `${videoModel.name} ${videoModel.tier}` : videoModel.name}
+                </p>
+              ) : null}
             </div>
           ) : null}
         </div>

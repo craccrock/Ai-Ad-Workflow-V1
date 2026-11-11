@@ -511,6 +511,48 @@ export const models: ModelConfig[] = [
       }),
   },
   {
+    id: "gemini-omni-1.2-flash",
+    provider: "kie",
+    providerModelId: "google/gemini-omni-flash-1-2",
+    name: "Gemini Omni Flash 1.2",
+    description: "Google's newest Omni. Billed per second, any length from 3 to 15s, native voice and sound.",
+    category: "video",
+    mediaType: "video",
+    inputTypes: ["text-to-video", "image-to-video", "reference-to-video"],
+    requiresPrompt: true,
+    // Kie pricing page, Nov 10 2026: 4 / 9 / 10 / 22 credits per second.
+    pricing: { unit: "per_second", rates: { "360p": cr(4), "720p": cr(9), "1080p": cr(10), "4K": cr(22) } },
+    options: {
+      durations: [4, 5, 6, 7, 8, 10, 12, 15], // Kie accepts any whole second from 3 to 15 (3 to 10 with an end frame)
+      defaultDuration: 8,
+      resolutions: ["360p", "720p", "1080p", "4K"],
+      defaultResolution: "720p",
+      aspectRatios: ["16:9", "9:16"],
+      defaultAspectRatio: "9:16",
+      references: {
+        frames: "start-end",
+        images: { max: 6 },
+        videos: { max: 1, maxSeconds: 15 },
+        framesExclusive: true,
+      },
+    },
+    mapInput: (p) => {
+      const editing = has(p.reference_video_urls);
+      return withExtra(p, {
+        prompt: p.prompt,
+        // Video edit follows the input clip's length, and Kie rejects a duration there.
+        duration: editing ? undefined : p.end_frame_url ? Math.min(10, Number(p.duration)) : Number(p.duration),
+        resolution: p.resolution?.toLowerCase(), // "4K" → "4k"
+        aspect_ratio: p.aspect_ratio,
+        first_frame_url: p.start_frame_url,
+        last_frame_url: p.end_frame_url,
+        image_urls: nonEmpty(p.reference_image_urls),
+        video_list: nonEmpty(p.reference_video_urls.slice(0, 1)),
+        seeds: typeof p.seed === "number" && p.seed >= 10000 && p.seed <= 99999 ? p.seed : undefined,
+      });
+    },
+  },
+  {
     id: "nano-banana-pro",
     provider: "kie",
     providerModelId: "nano-banana-pro",
@@ -632,7 +674,7 @@ export const models: ModelConfig[] = [
   // ═══════════════════════════════════════════════════════
 
   // ── Video ──
-  kling3("Standard", "std", { off: 14, on: 20 }),
+  kling3("Standard", "std", { off: 15.1, on: 20 }),
   kling3("Pro", "pro", { off: 18, on: 27 }),
   kling3("4K", "4K", { off: 67, on: 67 }),
   {
@@ -646,7 +688,7 @@ export const models: ModelConfig[] = [
     mediaType: "video",
     inputTypes: ["text-to-video", "image-to-video"],
     requiresPrompt: true,
-    pricing: { unit: "per_second", rates: { default: cr(11) }, audioRates: { default: cr(22) } },
+    pricing: { unit: "per_second", rates: { default: cr(12.6) }, audioRates: { default: cr(22) } },
     options: {
       durations: [5, 10],
       defaultDuration: 5,
@@ -980,6 +1022,35 @@ export const models: ModelConfig[] = [
         aspect_ratio: p.aspect_ratio,
         resolution: p.resolution,
         input_urls: mode === "image-edit" ? p.image_urls : undefined,
+      }),
+  },
+  {
+    id: "seedream-5-5",
+    provider: "kie",
+    providerModelId: "seedream/5-5-text-to-image",
+    endpoints: { "text-to-image": "seedream/5-5-text-to-image", "image-edit": "seedream/5-5-image-to-image" },
+    name: "Seedream 5.5",
+    description: "ByteDance's newest image model. Cheap, photoreal, takes up to 10 reference images.",
+    category: "image",
+    mediaType: "image",
+    inputTypes: ["text-to-image", "image-edit"],
+    requiresPrompt: true,
+    // Kie pricing page, Nov 10 2026: 3.6 credits at 1K and 1.5K, 6.3 at 2K.
+    pricing: { unit: "per_image", rates: { "1K": cr(3.6), "1.5K": cr(3.6), "2K": cr(6.3) }, note: "+1.44 credits ($0.007) per input image." },
+    options: {
+      resolutions: ["1K", "1.5K", "2K"],
+      defaultResolution: "2K",
+      aspectRatios: ["1:1", "3:4", "4:3", "2:3", "3:2", "9:16", "16:9", "21:9"],
+      defaultAspectRatio: "9:16",
+      maxImages: 10,
+    },
+    mapInput: (p, mode) =>
+      withExtra(p, {
+        prompt: p.prompt,
+        aspect_ratio: p.aspect_ratio,
+        size: p.resolution,
+        output_format: "png",
+        image_urls: mode === "image-edit" ? p.image_urls : undefined,
       }),
   },
   {

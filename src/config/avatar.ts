@@ -6,6 +6,7 @@
 /** Models that generate speech natively from an image + a line of dialogue, in the order the picker shows them. */
 export const AVATAR_MODEL_IDS = [
   "gemini-omni-1.1-flash", // the default: 4/6/8/10 s, native voice, cheapest per talking-head clip
+  "gemini-omni-1.2-flash", // per-second pricing, any length up to 15 s, native voice
   "seedance-2.5", // for later — Seedance takes a different prompt shape (see board-avatar-prompt.ts notes); 5–30 s
   "seedance-2",
   "seedance-2-fast",

@@ -1,7 +1,7 @@
 /** Starter-image tab: which models it offers and the brief the prompt writer follows. Client + server. */
 
 /** Image models offered on the Starter tab, in display order. The first two are ticked by default. */
-export const STARTER_MODEL_IDS = ["nano-banana-2-1", "nano-banana-2", "nano-banana-pro"] as const;
+export const STARTER_MODEL_IDS = ["nano-banana-2-1", "nano-banana-2", "nano-banana-pro", "seedream-5-5"] as const;
 export const STARTER_DEFAULT_MODELS: string[] = ["nano-banana-2-1", "nano-banana-2"];
 export const STARTER_MAX_IMAGES = 8;
 

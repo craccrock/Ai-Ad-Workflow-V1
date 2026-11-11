@@ -15,7 +15,7 @@ import { estimateCost } from "@/lib/generation-params";
 import type { AvatarAssembly, AvatarChunk, Beat, BoardWithBeats, FinalAssembly, Media, Profile, Subject } from "@/lib/types";
 import { cn, formatUsd } from "@/lib/utils";
 import { AvatarCard, MIN_AVATAR_PROMPT_CHARS, type ChunkPatch } from "./avatar-card";
-import { BeatCard, fetchGeneration, videoModels, type BeatPatch } from "./beat-card";
+import { BeatCard, clipCost, fetchGeneration, videoModels, videoOptionLabel, type BeatPatch } from "./beat-card";
 import { CaptionsPanel } from "./captions-panel";
 import { EditNotes } from "./edit-notes";
 import { RefSlot } from "./ref-slot";
@@ -144,16 +144,17 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   const model = getModel(board.model) ?? models[0];
   const imageModels = useMemo(() => models.filter((m) => m.mediaType === "image" && m.category === "image"), []);
   const videoModel = getModel(board.video_model) ?? videoModels[0];
-  const perClip = useMemo(() => {
-    try {
-      const o = videoModel.options;
-      const duration = o.durations?.includes(board.video_duration) ? board.video_duration : (o.defaultDuration ?? o.durations?.[0]);
-      const resolution = o.resolutions ? (board.video_resolution && o.resolutions.includes(board.video_resolution) ? board.video_resolution : (o.defaultResolution ?? o.resolutions[0])) : undefined;
-      return estimateCost(videoModel, { prompt: "x", image_urls: [], reference_image_urls: [], reference_video_urls: [], reference_audio_urls: [], elements: [], settings: {}, duration, resolution, generate_audio: false }, 1).perGeneration;
-    } catch {
-      return null;
-    }
-  }, [videoModel, board.video_duration, board.video_resolution]);
+  const perClip = useMemo(() => clipCost(videoModel, board.video_duration, board.video_resolution), [videoModel, board.video_duration, board.video_resolution]);
+  /** What one beat's clip costs with its own model, length and quality overrides applied over the board's defaults. */
+  const beatClipCost = useCallback(
+    (b: Pick<Beat, "video_model" | "video_duration" | "video_resolution">) => clipCost(getModel(b.video_model ?? board.video_model) ?? videoModel, b.video_duration ?? board.video_duration, b.video_resolution ?? board.video_resolution),
+    [board.video_model, board.video_duration, board.video_resolution, videoModel],
+  );
+  const brollBeats = useMemo(() => beats.filter((b) => b.role === "broll"), [beats]);
+  const brollClipTotal = useMemo(() => {
+    const costs = brollBeats.map(beatClipCost);
+    return costs.length && costs.every((c) => c != null) ? costs.reduce((a: number, c) => a + (c ?? 0), 0) : null;
+  }, [brollBeats, beatClipCost]);
   // ─── avatar phase ─────────────────────────────────────────────────────────
   const avatarModelId = board.avatar_model || DEFAULT_AVATAR_MODEL;
   const avatarModel = getModel(avatarModelId) ?? avatarModels[0];
@@ -456,9 +457,10 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     const list = await flush();
     const targets = list.filter((b) => b.role === "broll" && b.video_prompt?.trim() && b.generation_id && gens[b.generation_id]?.status === "completed" && (mode === "all" || !(b.video_generation_id && gens[b.video_generation_id]?.status === "completed")));
     if (!targets.length) return toast("Nothing to animate", { description: mode === "missing" ? "Every B-roll beat with a starter image and a video prompt already has a clip." : "No B-roll beats have both a starter image and a video prompt." });
-    const cost = perClip != null ? perClip * targets.filter((b) => !b.video_model).length : null;
-    const overrides = targets.filter((b) => b.video_model).length;
-    if (!window.confirm(`Animate ${targets.length} clip${targets.length === 1 ? "" : "s"}${cost != null ? ` for about ${formatUsd(cost)}${overrides ? ` plus ${overrides} with their own model` : ""}` : ""}, ${concurrency} at a time?`)) return;
+    const costs = targets.map(beatClipCost);
+    const cost = costs.every((c) => c != null) ? costs.reduce((a: number, c) => a + (c ?? 0), 0) : null;
+    const overrides = targets.filter((b) => b.video_model || b.video_duration || b.video_resolution).length;
+    if (!window.confirm(`Animate ${targets.length} clip${targets.length === 1 ? "" : "s"}${cost != null ? ` for about ${formatUsd(cost)}${overrides ? ` (${overrides} with their own settings, included)` : ""}` : ""}, ${concurrency} at a time?`)) return;
     stopRef.current = false;
     setRunAll({ total: targets.length, done: 0 });
     const queue = [...targets];
@@ -828,7 +830,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
             <NativeSelect value={board.video_model} disabled={!canEdit} onChange={(e) => void patchBoard({ video_model: e.target.value, video_resolution: null })}>
               {videoModels.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.tier ? `${m.name} ${m.tier}` : m.name}
+                  {videoOptionLabel(m, board.video_duration, board.video_resolution)}
                 </option>
               ))}
             </NativeSelect>
@@ -847,6 +849,11 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
             </div>
           ) : null}
           {perClip != null ? <p className="text-[11px] text-muted">About {formatUsd(perClip)} per clip · each card can override these</p> : null}
+          {brollClipTotal != null && brollBeats.length ? (
+            <p className="text-[11px] text-muted">
+              All {brollBeats.length} B-roll clips: about <span className="text-cream">{formatUsd(brollClipTotal)}</span>, one take each
+            </p>
+          ) : null}
         </div>
       </aside>
 
