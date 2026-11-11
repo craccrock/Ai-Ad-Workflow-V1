@@ -922,6 +922,15 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 {chunks.length} chunks{chunks.length ? ` · ${avatarTotalSeconds}s of talking head` : ""} · {avatarPromptCount} prompts · {avatarClipCount} clips{avatarTotalCost != null && chunks.length ? ` · about ${formatUsd(avatarTotalCost)} for the full set` : ""}
               </span>
               <div className="ml-auto flex flex-wrap items-center gap-2">
+                <Button variant="outline" size="sm" disabled={!canEdit || chunking || (!board.script.trim() && !beats.length)} onClick={() => void chunkScript()} title={`Cut the whole script into as few clips as possible, each one ${Math.max(...avatarDurations)}s or shorter at quick UGC pace`}>
+                  {chunking ? <Loader2 className="animate-spin" /> : <Scissors />} {chunking ? "Chunking…" : chunks.length ? "Re-chunk script" : "Chunk script"}
+                </Button>
+                <Button variant="outline" size="sm" disabled={!canEdit || writingAvatar || !chunks.length || !avatarReady} onClick={() => void writeAvatarPrompts("missing")} title="Write a talking-head prompt for every chunk that has none yet">
+                  {writingAvatar ? <Loader2 className="animate-spin" /> : <Wand2 />} {writingAvatar ? "Writing…" : "Write avatar prompts"}
+                </Button>
+                <Button variant="ghost" size="sm" disabled={!canEdit || writingAvatar || !avatarPromptCount} onClick={() => void writeAvatarPrompts("all")} title="Rewrite every chunk's prompt">
+                  Rewrite all
+                </Button>
                 {runAll ? (
                   <>
                     <RunProgress done={runAll.done} total={runAll.total} inFlight={Math.min(concurrency, runAll.total - runAll.done)} />
@@ -931,15 +940,6 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                   </>
                 ) : (
                   <>
-                    <Button variant="outline" size="sm" disabled={!canEdit || chunking || (!board.script.trim() && !beats.length)} onClick={() => void chunkScript()} title={`Cut the whole script into as few clips as possible, each one ${Math.max(...avatarDurations)}s or shorter at quick UGC pace`}>
-                      {chunking ? <Loader2 className="animate-spin" /> : <Scissors />} {chunking ? "Chunking…" : chunks.length ? "Re-chunk script" : "Chunk script"}
-                    </Button>
-                    <Button variant="outline" size="sm" disabled={!canEdit || writingAvatar || !chunks.length || !avatarReady} onClick={() => void writeAvatarPrompts("missing")} title="Write a talking-head prompt for every chunk that has none yet">
-                      {writingAvatar ? <Loader2 className="animate-spin" /> : <Wand2 />} {writingAvatar ? "Writing…" : "Write avatar prompts"}
-                    </Button>
-                    <Button variant="ghost" size="sm" disabled={!canEdit || writingAvatar || !avatarPromptCount} onClick={() => void writeAvatarPrompts("all")} title="Rewrite every chunk's prompt">
-                      Rewrite all
-                    </Button>
                     <span className="mx-1 h-5 w-px bg-hairline" />
                     <Button variant="outline" size="sm" disabled={!canEdit || !avatarClipCount} onClick={() => void animateAvatarAll("all")}>
                       <RotateCw /> Regenerate all
