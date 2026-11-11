@@ -523,7 +523,7 @@ export const models: ModelConfig[] = [
     // Kie pricing page, Nov 10 2026: 4 / 9 / 10 / 22 credits per second.
     pricing: { unit: "per_second", rates: { "360p": cr(4), "720p": cr(9), "1080p": cr(10), "4K": cr(22) } },
     options: {
-      durations: [4, 5, 6, 7, 8, 10, 12, 15], // Kie accepts any whole second from 3 to 15 (3 to 10 with an end frame)
+      durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], // every whole second Kie accepts (3 to 10 with an end frame)
       defaultDuration: 8,
       resolutions: ["360p", "720p", "1080p", "4K"],
       defaultResolution: "720p",
