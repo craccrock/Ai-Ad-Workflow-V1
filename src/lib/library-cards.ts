@@ -12,7 +12,7 @@ export const WINNERS_FOLDER = "Winners";
 const STYLES = ["ugc_real", "anatomy", "clay", "animated", "product", "other"] as const;
 const USES = ["pose", "setting", "as_is"] as const;
 
-const CARD_PROMPT = `You are cataloguing one image from the reference library of an AI UGC ad studio (direct-response ads, mostly skincare for women 45+). A separate writer, who cannot see the image, will read ONLY your card to decide whether this image is the right reference for a line of an ad script. Be literal and specific about what is actually visible. Do not guess at things you cannot see.
+const CARD_PROMPT = `You are cataloguing one image from the reference library of an AI UGC ad studio (direct-response ads, mostly skincare for women 45+). A separate writer, who cannot see the image, will read ONLY your card to decide whether this image is the right reference for a line of an ad script. Be literal and specific about what is actually visible. Do not guess at things you cannot see. Loomi (a 40% urea cream) is this studio's own product: note when its jar appears, and do not list its branding as an issue.
 
 Return ONLY a JSON object, no prose and no code fence:
 {
@@ -124,7 +124,7 @@ export function libraryLine(m: Media): string {
 }
 
 export const LIBRARY_LEGEND =
-  'Each line is "Category / filename :: card". When you reference an asset, write back ONLY the "Category / filename" part. The card was written by a model that looked at the image, so trust it over the filename. Prefer ★ starred assets and higher quality scores when several fit; an asset whose card does not actually match the beat is worse than no asset. "Winners" are takes this editor approved on earlier boards: they show the look the editor wants, and they make strong pose and setting references.';
+  'Each line is "Category / filename :: card". When you reference an asset, write back ONLY the "Category / filename" part. The card was written by a model that looked at the image, so trust it over the filename. Choose by what the beat needs first: the asset whose card matches the line's subject and action wins, whatever its score. The ★ star and the quality score only break ties between assets that fit equally well, and a folder with lower scores is not a reason to skip it. An asset whose card does not actually match the beat is worse than no asset. "Watch out" notes about recognisable faces, partial nudity or the person's age, sex or race only matter when an asset is used as-is: as a pose or setting reference the person is replaced, so ignore them. Loomi is this studio's own product, so a Loomi jar or label in an asset is wanted, never a problem. "Winners" are takes this editor approved on earlier boards: they show the look the editor wants, and they make strong pose and setting references.';
 
 /**
  * Copies an approved take into the library's Winners folder (its own file, so retention never deletes it), stars it
