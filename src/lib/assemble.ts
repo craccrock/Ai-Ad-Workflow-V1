@@ -84,6 +84,32 @@ export function run(bin: string, args: string[], timeoutMs = 240_000): Promise<{
 }
 
 /** Duration, frame size and whether there is an audio stream, read from ffmpeg's own probe output. */
+/** Size the fallback encode aims for when storage refuses a file as too large (the project-wide cap defaults to 50 MB). */
+const FIT_TARGET_BYTES = 46 * 1024 * 1024;
+
+/**
+ * Uploads an assembled video. If storage refuses it for size (the project's global upload limit, which is separate
+ * from the bucket's own limit), the file is re-encoded once at a bitrate that fits and uploaded again, so a long or
+ * 1080p cut still lands. Raising the limit in Supabase > Storage > Settings makes the fallback unnecessary.
+ */
+async function uploadVideo(bin: string, dir: string, file: string, storagePath: string, duration: number, what: string): Promise<{ url: string; compressedKbps: number | null }> {
+  const admin = createAdminClient();
+  const put = async (p: string) => admin.storage.from("generations").upload(storagePath, await readFile(p), { contentType: "video/mp4", upsert: true, cacheControl: IMMUTABLE_CACHE });
+  let compressedKbps: number | null = null;
+  let { error } = await put(file);
+  if (error && /maximum allowed size|too large|payload/i.test(error.message)) {
+    const audioKbps = 128;
+    const kbps = Math.max(600, Math.floor((FIT_TARGET_BYTES * 8) / Math.max(1, duration) / 1000) - audioKbps);
+    const fitted = path.join(dir, "fitted.mp4");
+    const r = await run(bin, ["-hide_banner", "-y", "-i", file, "-c:v", "libx264", "-preset", "veryfast", "-b:v", `${kbps}k`, "-maxrate", `${Math.round(kbps * 1.15)}k`, "-bufsize", `${kbps * 2}k`, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", `${audioKbps}k`, "-movflags", "+faststart", fitted]);
+    if (r.code !== 0) throw new HttpError(500, `${what} is too large for storage, and shrinking it failed: ${lastLine(r.stderr)}`, r.stderr.slice(-600));
+    ({ error } = await put(fitted));
+    compressedKbps = kbps;
+  }
+  if (error) throw new HttpError(500, `Storage upload failed: ${error.message}`);
+  return { url: admin.storage.from("generations").getPublicUrl(storagePath).data.publicUrl, compressedKbps };
+}
+
 export async function probe(bin: string, file: string): Promise<{ duration: number; width: number; height: number; hasAudio: boolean }> {
   const { stderr } = await run(bin, ["-hide_banner", "-i", file, "-f", "null", "-"], 60_000);
   const d = stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
@@ -227,10 +253,8 @@ export async function assembleAroll(board: Board, chunks: AvatarChunk[], gens: R
     // 4. Upload and record; drop the previous assembly file.
     const storagePath = `assemblies/${board.id}/aroll-${Date.now()}.mp4`;
     const admin = createAdminClient();
-    const { error } = await admin.storage.from("generations").upload(storagePath, body, { contentType: "video/mp4", upsert: true, cacheControl: IMMUTABLE_CACHE });
-    if (error) throw new HttpError(500, `Storage upload failed: ${error.message}`);
-    const { data } = admin.storage.from("generations").getPublicUrl(storagePath);
-    const assembly: AvatarAssembly = { url: data.publicUrl, path: storagePath, duration_s: Math.round(final.duration * 10) / 10, chunk_ids: ordered.map((c) => c.id), trims, words: trackWords.length ? trackWords : undefined, created_at: new Date().toISOString() };
+    const uploaded = await uploadVideo(bin, dir, out, storagePath, final.duration, "The assembled A-roll");
+    const assembly: AvatarAssembly = { url: uploaded.url, compressed_kbps: uploaded.compressedKbps ?? undefined, path: storagePath, duration_s: Math.round(final.duration * 10) / 10, chunk_ids: ordered.map((c) => c.id), trims, words: trackWords.length ? trackWords : undefined, created_at: new Date().toISOString() };
     if (board.avatar_assembly?.path && board.avatar_assembly.path !== storagePath) await removeStorageObject("generations", board.avatar_assembly.path).catch(() => {});
     const { error: upErr } = await admin.from("boards").update({ avatar_assembly: assembly, updated_at: new Date().toISOString() }).eq("id", board.id);
     if (upErr) throw new HttpError(500, upErr.message);
@@ -413,11 +437,10 @@ export async function assembleFinal(board: Board, beats: Beat[], gens: Record<st
     // 6. Upload, record, and log every placed B-roll clip as a keeper.
     const storagePath = `assemblies/${board.id}/final-${Date.now()}.mp4`;
     const admin = createAdminClient();
-    const { error } = await admin.storage.from("generations").upload(storagePath, body, { contentType: "video/mp4", upsert: true, cacheControl: IMMUTABLE_CACHE });
-    if (error) throw new HttpError(500, `Storage upload failed: ${error.message}`);
-    const { data } = admin.storage.from("generations").getPublicUrl(storagePath);
+    const uploaded = await uploadVideo(bin, dir, out, storagePath, final.duration, "The finished ad");
     const assembly: FinalAssembly = {
-      url: data.publicUrl,
+      url: uploaded.url,
+      compressed_kbps: uploaded.compressedKbps ?? undefined,
       path: storagePath,
       duration_s: Math.round(final.duration * 10) / 10,
       placements: live.map(({ p }) => ({ beat_id: p.beat_id, generation_id: p.generation_id, start_s: Math.round(p.start_s * 100) / 100, end_s: Math.round(p.end_s * 100) / 100, in_s: p.in_s, score: p.score })),

@@ -221,6 +221,8 @@ export type Board = {
 
 export type AvatarAssembly = {
   url: string;
+  /** Set when the file had to be re-encoded at this video bitrate to fit storage's upload limit. */
+  compressed_kbps?: number;
   path: string;
   duration_s: number;
   chunk_ids: string[];
@@ -288,6 +290,8 @@ export type EditNote = { id: string; target_type: "aroll" | "final"; note: strin
 /** The finished ad: B-roll laid over the A-roll track. */
 export type FinalAssembly = {
   url: string;
+  /** Set when the file had to be re-encoded at this video bitrate to fit storage's upload limit. */
+  compressed_kbps?: number;
   path: string;
   duration_s: number;
   placements: { beat_id: string; generation_id: string; start_s: number; end_s: number; in_s: number; score: number }[];

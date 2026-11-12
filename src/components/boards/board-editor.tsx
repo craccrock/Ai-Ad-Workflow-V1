@@ -749,7 +749,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     try {
       const res = await api<{ assembly: AvatarAssembly }>(`/api/boards/${initial.id}/avatar/assemble`, { method: "POST", json: {} });
       setBoard((b) => ({ ...b, avatar_assembly: res.assembly }));
-      toast.success(`A-roll assembled · ${res.assembly.duration_s}s`, { description: `${res.assembly.chunk_ids.length} clips joined, tails trimmed.` });
+      toast.success(`A-roll assembled · ${res.assembly.duration_s}s`, { description: `${res.assembly.chunk_ids.length} clips joined, tails trimmed.${res.assembly.compressed_kbps ? ` Compressed to ${(res.assembly.compressed_kbps / 1000).toFixed(1)} Mbps to fit the storage upload limit.` : ""}` });
     } catch (e) {
       toast.error("Couldn't assemble the A-roll", { description: e instanceof Error ? e.message : String(e) });
     } finally {
