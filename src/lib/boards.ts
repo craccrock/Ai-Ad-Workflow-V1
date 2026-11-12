@@ -134,6 +134,21 @@ function redoBlock(redo?: RedoDirection): string {
   return `\n\nTHE EDITOR REJECTED THE WHOLE PREVIOUS BOARD FOR THIS SCRIPT. This is a redo, and their direction below is the most important instruction in this prompt. Follow it on every beat, including the choice of what each shot shows, not just the wording.\n\nEDITOR'S DIRECTION:\n${redo.direction.trim()}${sample ? `\n\nPROMPTS FROM THE REJECTED BOARD (what NOT to produce again; do not reuse their shot ideas unless the direction says the idea was fine):\n${sample}` : ""}`;
 }
 
+/** Script lines per writer: a board is written by several Claude calls at once so a long script finishes inside one request. */
+const LINES_PER_WRITER = 7;
+const MAX_WRITERS = 5;
+
+/** Cuts the script into contiguous, evenly sized runs of lines, one per writer. */
+function scriptParts(script: string): string[] {
+  const lines = script.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const n = Math.min(MAX_WRITERS, Math.max(1, Math.ceil(lines.length / LINES_PER_WRITER)));
+  if (n === 1) return [lines.join("\n")];
+  const size = Math.ceil(lines.length / n);
+  const parts: string[] = [];
+  for (let i = 0; i < lines.length; i += size) parts.push(lines.slice(i, i + size).join("\n"));
+  return parts;
+}
+
 export async function splitBoard(board: Board, subject: Subject | null, redo?: RedoDirection): Promise<{ beats: Beat[]; brainOutput: BrainOutput; usage: { input: number; output: number } }> {
   if (!process.env.ANTHROPIC_API_KEY) throw new HttpError(503, "ANTHROPIC_API_KEY is not set — add it to the environment to use the beat splitter");
   if (!board.script.trim()) throw new HttpError(400, "Paste a script first");
@@ -146,20 +161,27 @@ export async function splitBoard(board: Board, subject: Subject | null, redo?: R
     .replace("{{LIBRARY_INDEX}}", lines.length ? `\n${lines.join("\n")}` : "(library is empty)")
     .replace("{{SCRIPT}}", `\n${board.script.trim()}`) + (await approvedExamplesBlock("beat_image")) + (await imageRulesBlock()) + redoBlock(redo);
 
+  // One writer per run of script lines, all at once. A single call for a whole script (reasoning included) ran past the
+  // 300 s request limit; in parallel each writer only has a few lines to cover, so the board lands in a fraction of the time.
   const client = new Anthropic();
-  const stream = client.messages.stream({
-    model: settings.board_brain_model,
-    max_tokens: 120000, // the model's reasoning counts against this; 32k was cutting long boards off mid-answer
-    system,
-    messages: [{ role: "user", content: "Produce the JSON board for the SCRIPT above." }],
-  });
-  const message = await stream.finalMessage();
-  if (message.stop_reason === "refusal") throw new HttpError(502, "The brain declined this script");
-  if (message.stop_reason === "max_tokens") throw new HttpError(502, "Claude ran out of room before it finished writing the board. Nothing was changed and your note is still in the box. Press the button again; if it repeats, tell Claude Code so the limit can be raised.");
-  const text = message.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("");
-  const out = parseBrainJson(text);
-  const rawBeats = Array.isArray(out.beats) ? out.beats : [];
+  const parts = scriptParts(board.script);
+  const results = await Promise.all(
+    parts.map(async (part, i) => {
+      const ask =
+        parts.length === 1
+          ? "Produce the JSON board for the SCRIPT above."
+          : `The SCRIPT above is being boarded by ${parts.length} writers working at the same time, each on one consecutive part. You are writer ${i + 1} of ${parts.length}. Produce the JSON board for YOUR PART ONLY: the lines between the markers below. Cover every word of your part, in order, and nothing outside it. Read the whole SCRIPT for context so your beats fit what comes before and after, and return the same JSON shape as always (subject_lock, style_locks, beats), with beat ids starting at 1.${i > 0 ? " Your part starts mid-ad: do not re-introduce the speaker or open with an establishing shot unless the line calls for one." : ""}\n\n<<<YOUR PART\n${part}\nYOUR PART>>>`;
+      const message = await client.messages.stream({ model: settings.board_brain_model, max_tokens: 64000, system, messages: [{ role: "user", content: ask }] }).finalMessage();
+      if (message.stop_reason === "refusal") throw new HttpError(502, "The brain declined this script");
+      if (message.stop_reason === "max_tokens") throw new HttpError(502, `Claude ran out of room on part ${i + 1} of ${parts.length} of the script before it finished. Nothing was changed and your note is still in the box. Press the button again; if it repeats, tell Claude Code.`);
+      const text = message.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("");
+      return { out: parseBrainJson(text), usage: message.usage };
+    }),
+  );
+  const out: BrainOutput = { subject_lock: results[0].out.subject_lock, style_locks: results[0].out.style_locks, beats: results.flatMap((r) => (Array.isArray(r.out.beats) ? r.out.beats : [])) };
+  const rawBeats = out.beats ?? [];
   if (!rawBeats.length) throw new HttpError(502, "The brain returned no beats");
+  const usage = { input: results.reduce((a, r) => a + r.usage.input_tokens, 0), output: results.reduce((a, r) => a + r.usage.output_tokens, 0) };
 
   const rows = rawBeats.map((b, i) => {
     const plan = b.reference_plan ?? {};
@@ -190,7 +212,7 @@ export async function splitBoard(board: Board, subject: Subject | null, redo?: R
   if (error) throw new HttpError(500, error.message);
   const brainOutput = { subject_lock: out.subject_lock, style_locks: out.style_locks };
   await admin.from("boards").update({ brain_output: brainOutput, updated_at: new Date().toISOString() }).eq("id", board.id);
-  return { beats: data as Beat[], brainOutput, usage: { input: message.usage.input_tokens, output: message.usage.output_tokens } };
+  return { beats: data as Beat[], brainOutput, usage };
 }
 
 // ─── generation ──────────────────────────────────────────────────────────────
