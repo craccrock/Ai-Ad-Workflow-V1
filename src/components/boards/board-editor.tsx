@@ -112,6 +112,24 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   const [splitting, setSplitting] = useState(false);
   const [redoNote, setRedoNote] = useState("");
   const [redoRemember, setRedoRemember] = useState(true);
+  // The redo note is kept in this browser as it is typed, so a refresh, a crash or a failed redo never loses it.
+  const redoKey = `redo-note:${initial.id}`;
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        const saved = window.localStorage.getItem(redoKey);
+        if (saved) setRedoNote(saved);
+      } catch {}
+    }, 0);
+    return () => clearTimeout(t);
+  }, [redoKey]);
+  const changeRedoNote = (v: string) => {
+    setRedoNote(v);
+    try {
+      if (v.trim()) window.localStorage.setItem(redoKey, v);
+      else window.localStorage.removeItem(redoKey);
+    } catch {}
+  };
   const [saveState, setSaveState] = useState<"saved" | "dirty" | "saving">("saved");
   const [generating, setGenerating] = useState<Set<string>>(new Set());
   const [animating, setAnimating] = useState<Set<string>>(new Set());
@@ -299,7 +317,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
       setBoard((b) => ({ ...b, brain_output: res.brain_output }));
       setSaveState("saved");
       toast.success(direction ? `Board redone: ${res.beats.length} beats` : `Split into ${res.beats.length} beats`, { description: `${res.beats.filter((b) => b.role === "broll").length} B-roll · ${res.usage.output.toLocaleString()} tokens${res.remembered ? " · direction saved as a standing rule" : ""}` });
-      if (direction) setRedoNote("");
+      if (direction) changeRedoNote("");
     } catch (e) {
       toast.error("Split failed", { description: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -792,7 +810,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
               <Label className="mb-1">Board came out wrong? Say why</Label>
               <Textarea
                 value={redoNote}
-                onChange={(e) => setRedoNote(e.target.value)}
+                onChange={(e) => changeRedoNote(e.target.value)}
                 rows={4}
                 placeholder="What was wrong with all of it and what you want instead. Claude throws out every prompt on this board and rewrites them all with this as its top instruction."
                 className="font-sans text-[12px]"
