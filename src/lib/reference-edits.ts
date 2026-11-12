@@ -154,7 +154,7 @@ export async function analyzeReference(ref: ReferenceEdit): Promise<ReferenceEdi
       type: "text",
       text: `These are one frame from each shot of a short-form video ad, in order, with the shot's time range. The transcript of the voice is:\n"""${transcript.text.slice(0, 4000)}"""\n\nFor every shot say whether it is the PRESENTER (the person talking to camera, who appears in several shots) or B-ROLL (anything else: product, hands, locations, screen recordings, stock footage), on-screen TEXT cards, or OTHER. Then describe how this ad is edited as if briefing an editor who must cut the next one the same way: when it leaves the presenter and for what kind of line, how long B-roll runs last, how it opens and closes, anything distinctive. 3–6 sentences, concrete, no praise.\n\nReturn JSON only:\n{"shots":[{"shot":1,"kind":"speaker"|"broll"|"text"|"other","what":"<4–8 words>"}],"style_notes":"..."}`,
     });
-    const msg = await client.messages.create({ model: settings.board_brain_model, max_tokens: 4000, messages: [{ role: "user", content }] });
+    const msg = await client.messages.create({ model: settings.board_brain_model, max_tokens: 16000, messages: [{ role: "user", content }] });
     const text = msg.content.map((b) => (b.type === "text" ? b.text : "")).join("");
     const out = parseBrainJson(text) as unknown as { shots: { shot: number; kind: ReferenceShot["kind"]; what: string }[]; style_notes: string };
     const kinds = new Map<number, { kind: ReferenceShot["kind"]; what: string }>();

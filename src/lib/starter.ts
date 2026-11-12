@@ -41,7 +41,7 @@ Write the prompt.`,
 
   const settings = await getSettings();
   const client = new Anthropic();
-  const message = await client.messages.stream({ model: settings.board_brain_model, max_tokens: 2000, system: STARTER_SYSTEM_PROMPT, messages: [{ role: "user", content }] }).finalMessage();
+  const message = await client.messages.stream({ model: settings.board_brain_model, max_tokens: 12000, system: STARTER_SYSTEM_PROMPT, messages: [{ role: "user", content }] }).finalMessage();
   if (message.stop_reason === "refusal") throw new HttpError(502, "The prompt writer declined this brief");
   const prompt = message.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")

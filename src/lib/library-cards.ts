@@ -62,7 +62,7 @@ export async function describeMedia(media: Pick<Media, "id" | "url" | "filename"
   const { board_brain_model: model } = await getSettings();
   const msg = await new Anthropic().messages.create({
     model,
-    max_tokens: 1200,
+    max_tokens: 6000,
     messages: [{ role: "user", content: [image, { type: "text", text: `${CARD_PROMPT}\n\nFor context only (do not trust it over what you see), the file is currently named: "${media.folder ?? ""} / ${media.filename}"` }] }],
   });
   const text = msg.content.map((b) => (b.type === "text" ? b.text : "")).join("");

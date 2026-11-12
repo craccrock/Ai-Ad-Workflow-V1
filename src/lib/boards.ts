@@ -149,13 +149,13 @@ export async function splitBoard(board: Board, subject: Subject | null, redo?: R
   const client = new Anthropic();
   const stream = client.messages.stream({
     model: settings.board_brain_model,
-    max_tokens: 32000,
+    max_tokens: 120000, // the model's reasoning counts against this; 32k was cutting long boards off mid-answer
     system,
     messages: [{ role: "user", content: "Produce the JSON board for the SCRIPT above." }],
   });
   const message = await stream.finalMessage();
   if (message.stop_reason === "refusal") throw new HttpError(502, "The brain declined this script");
-  if (message.stop_reason === "max_tokens") throw new HttpError(502, "The script is too long for one split — try a shorter script");
+  if (message.stop_reason === "max_tokens") throw new HttpError(502, "Claude ran out of room before it finished writing the board. Nothing was changed and your note is still in the box. Press the button again; if it repeats, tell Claude Code so the limit can be raised.");
   const text = message.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("");
   const out = parseBrainJson(text);
   const rawBeats = Array.isArray(out.beats) ? out.beats : [];
@@ -281,7 +281,7 @@ Write the new prompt.`;
   content.push({ type: "text", text: user });
 
   const client = new Anthropic();
-  const message = await client.messages.stream({ model: settings.board_brain_model, max_tokens: 2500, system, messages: [{ role: "user", content }] }).finalMessage();
+  const message = await client.messages.stream({ model: settings.board_brain_model, max_tokens: 12000, system, messages: [{ role: "user", content }] }).finalMessage();
   if (message.stop_reason === "refusal") throw new HttpError(502, "The brain declined this direction");
   let text = message.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("").trim();
   let diagnosis: string | undefined;

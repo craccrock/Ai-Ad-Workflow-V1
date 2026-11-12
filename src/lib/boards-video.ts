@@ -76,7 +76,7 @@ export async function writeVideoPrompts(board: Board, subject: Subject | null, b
 
   const client = new Anthropic();
   const message = await client.messages
-    .stream({ model: settings.board_brain_model, max_tokens: 16000, system: system + (await approvedExamplesBlock("beat_video")), messages: [{ role: "user", content }] })
+    .stream({ model: settings.board_brain_model, max_tokens: 64000, system: system + (await approvedExamplesBlock("beat_video")), messages: [{ role: "user", content }] })
     .finalMessage();
   if (message.stop_reason === "refusal") throw new HttpError(502, "The brain declined these beats");
   if (message.stop_reason === "max_tokens") throw new HttpError(502, "Too many beats for one pass — try a smaller batch");
