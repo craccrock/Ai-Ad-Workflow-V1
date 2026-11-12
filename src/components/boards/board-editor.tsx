@@ -18,6 +18,7 @@ import { AvatarCard, MIN_AVATAR_PROMPT_CHARS, type ChunkPatch } from "./avatar-c
 import { BeatCard, clipCost, fetchGeneration, videoModels, videoOptionLabel, type BeatPatch } from "./beat-card";
 import { CaptionsPanel } from "./captions-panel";
 import { CostBreakdown } from "./cost-breakdown";
+import { BusyBar, StatusStrip, StripLegend, type StripItem, type StripState } from "./progress";
 import { EditNotes } from "./edit-notes";
 import { RefSlot } from "./ref-slot";
 import { SubjectPicker } from "./subject-picker";
@@ -110,6 +111,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   const [gens, setGens] = useState<Record<string, ApiGeneration>>(initial.generations);
   const [subject, setSubject] = useState<Subject | null>(initial.subject);
   const [splitting, setSplitting] = useState(false);
+  const [splitProgress, setSplitProgress] = useState<{ parts: number; done: number; beats: number; writing: number } | null>(null);
   const [redoNote, setRedoNote] = useState("");
   const [redoRemember, setRedoRemember] = useState(true);
   // The redo note is kept in this browser as it is typed, so a refresh, a crash or a failed redo never loses it.
@@ -310,7 +312,33 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
     try {
       if (scriptTimer.current) clearTimeout(scriptTimer.current);
       await api(`/api/boards/${initial.id}`, { method: "PATCH", json: { script: board.script } });
-      const res = await api<BoardWithBeats & { usage: { input: number; output: number }; remembered?: boolean }>(`/api/boards/${initial.id}/split`, { method: "POST", json: direction ? { direction, remember: redoRemember } : {} });
+      // The split streams its progress: one JSON object per line, then the finished board.
+      type SplitResult = BoardWithBeats & { usage: { input: number; output: number }; remembered?: boolean };
+      setSplitProgress({ parts: 0, done: 0, beats: 0, writing: 0 });
+      const response = await fetch(`/api/boards/${initial.id}/split`, { method: "POST", headers: { "content-type": "application/json", accept: "application/x-ndjson" }, body: JSON.stringify(direction ? { direction, remember: redoRemember } : {}) });
+      if (!response.ok || !response.body) {
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || (response.status === 504 ? "The server ran out of time (5 minutes) before Claude finished. Nothing was changed." : `Request failed (${response.status})`));
+      }
+      let res: SplitResult | null = null;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const event = JSON.parse(line) as { type: "progress"; parts: number; done: number; beats: number; writing: number } | { type: "done"; result: SplitResult } | { type: "error"; message: string };
+          if (event.type === "progress") setSplitProgress({ parts: event.parts, done: event.done, beats: event.beats, writing: event.writing });
+          else if (event.type === "error") throw new Error(event.message);
+          else res = event.result;
+        }
+        if (done) break;
+      }
+      if (!res) throw new Error("The connection dropped before the board came back (the server allows 5 minutes). Refresh the page: if the beats changed, the redo did finish.");
       setBeats(res.beats);
       setMedia((m) => ({ ...m, ...res.media }));
       setGens(res.generations);
@@ -322,6 +350,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
       toast.error("Split failed", { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setSplitting(false);
+      setSplitProgress(null);
     }
   }
 
@@ -776,6 +805,20 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
   }
 
   const brollCount = beats.filter((b) => b.role === "broll").length;
+
+  // ─── progress ─────────────────────────────────────────────────────────────
+  // A script line becomes a little under two beats on average; used only to size the split's progress bar.
+  const expectedBeats = Math.max(4, Math.round(board.script.split(/\r?\n/).filter((l) => l.trim()).length * 1.8));
+  const splitFraction = !splitProgress || !splitProgress.parts || (!splitProgress.beats && !splitProgress.done) ? null : Math.min(0.97, Math.max(splitProgress.done / splitProgress.parts, splitProgress.beats / expectedBeats));
+  const stateOf = (gen: ApiGeneration | null | undefined, busy: boolean): StripState => (busy || gen?.status === "queued" || gen?.status === "processing" ? "running" : gen?.status === "completed" ? "done" : gen?.status === "failed" ? "failed" : "none");
+  const clipLabel = (s: string) => (s.length > 70 ? `${s.slice(0, 70)}…` : s) || "(no line)";
+  const imageStrip: StripItem[] = beats.map((b, i) => ({ id: b.id, n: i + 1, state: stateOf(b.generation_id ? gens[b.generation_id] : null, generating.has(b.id)), approved: Boolean(b.generation_id && approved.has(b.generation_id)), title: clipLabel(b.vo) }));
+  const clipStrip: StripItem[] = beats
+    .map((b, i) => ({ b, i }))
+    .filter(({ b }) => b.role === "broll")
+    .map(({ b, i }) => ({ id: b.id, n: i + 1, state: stateOf(b.video_generation_id ? gens[b.video_generation_id] : null, animating.has(b.id)), approved: Boolean(b.video_generation_id && approved.has(b.video_generation_id)), title: clipLabel(b.vo) }));
+  const chunkStrip: StripItem[] = chunks.map((c, i) => ({ id: c.id, n: i + 1, state: stateOf(c.generation_id ? gens[c.generation_id] : null, animating.has(c.id)), approved: Boolean(c.generation_id && approved.has(c.generation_id)), title: clipLabel(c.vo) }));
+  const jumpTo = (prefix: string) => (id: string) => document.getElementById(`${prefix}-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   const doneCount = beats.filter((b) => b.role === "broll" && b.generation_id && gens[b.generation_id]?.status === "completed").length;
   const clipCount = beats.filter((b) => b.role === "broll" && b.video_generation_id && gens[b.video_generation_id]?.status === "completed").length;
   const brollClipCount = beats.filter((b) => b.role === "broll" && b.overlay_enabled !== false && b.video_generation_id && gens[b.video_generation_id]?.status === "completed").length;
@@ -805,6 +848,20 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
             {splitting ? <Loader2 className="animate-spin" /> : <Wand2 />}
             {splitting ? (redoNote.trim() && beats.length ? "Redoing the board…" : "Splitting with Claude…") : beats.length ? (redoNote.trim() ? "Redo the whole board" : "Re-split into beats") : "Split into beats"}
           </Button>
+          {splitting ? (
+            <BusyBar
+              className="mt-2"
+              label={redoNote.trim() && beats.length ? "Redoing the whole board" : "Splitting the script into beats"}
+              fraction={splitFraction}
+              detail={
+                !splitProgress || !splitProgress.parts
+                  ? "Loading the library and your rules…"
+                  : !splitProgress.beats && !splitProgress.done
+                    ? `${splitProgress.parts} writer${splitProgress.parts === 1 ? "" : "s"} reading the script${redoNote.trim() && beats.length ? " and your note" : ""}; beats appear here as they are written`
+                    : `${splitProgress.beats} beat${splitProgress.beats === 1 ? "" : "s"} written · ${splitProgress.done} of ${splitProgress.parts} parts finished`
+              }
+            />
+          ) : null}
           {beats.length && canEdit ? (
             <div className="mt-2 rounded-[6px] border border-hairline p-2">
               <Label className="mb-1">Board came out wrong? Say why</Label>
@@ -1011,6 +1068,17 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
               </div>
             </div>
 
+            {chunking ? <BusyBar label="Claude is cutting the script into chunks" detail="It reports nothing until it finishes, so only the timer moves." /> : null}
+            {writingAvatar ? <BusyBar label="Claude is writing the avatar prompts" detail="One pass over every chunk that needs a prompt. Only the timer moves until it finishes." /> : null}
+            {assembling ? <BusyBar label="Assembling the A-roll" detail="Transcribing each clip, trimming it to the spoken words and joining them. Usually one to three minutes." /> : null}
+            {assemblingFinal ? <BusyBar label="Cutting the B-roll into the ad" detail="Placing each clip on its line and rendering the finished video. Usually one to four minutes." /> : null}
+            {chunks.length ? (
+              <div className="space-y-2 rounded-[8px] border border-hairline bg-surface px-3 py-2.5">
+                <StatusStrip label="A-roll" items={chunkStrip} onPick={jumpTo("chunk")} />
+                <StripLegend />
+              </div>
+            ) : null}
+
             {chunks.length === 0 ? (
               <div className="rounded-[8px] border border-dashed border-hairline px-6 py-16 text-center">
                 <p className="font-serif text-xl text-cream">No chunks yet</p>
@@ -1019,8 +1087,8 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
             ) : (
               <div className="space-y-4">
                 {chunks.map((chunk, index) => (
+                  <div key={chunk.id} id={`chunk-${chunk.id}`} className="scroll-mt-24">
                   <AvatarCard
-                    key={chunk.id}
                     chunk={chunk}
                     index={index}
                     model={avatarModel}
@@ -1038,6 +1106,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                     onApprove={(id, on) => approve("chunk", chunk.id, id, on)}
                     approved={approved}
                   />
+                  </div>
                 ))}
               </div>
             )}
@@ -1169,6 +1238,15 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
           </div>
         </div>
 
+        {writingVideo ? <BusyBar className="mb-4" label="Claude is writing the video prompts" detail="One pass over every B-roll beat that needs a prompt. It reports nothing until it finishes, so only the timer moves." /> : null}
+        {beats.length ? (
+          <div className="mb-4 space-y-2 rounded-[8px] border border-hairline bg-surface px-3 py-2.5">
+            <StatusStrip label="Images" items={imageStrip} onPick={jumpTo("beat")} />
+            {clipStrip.length ? <StatusStrip label="Clips" items={clipStrip} onPick={jumpTo("beat")} /> : null}
+            <StripLegend />
+          </div>
+        ) : null}
+
         {beats.length === 0 ? (
           <div className="rounded-[8px] border border-dashed border-hairline px-6 py-20 text-center">
             <p className="font-serif text-xl text-cream">No beats yet</p>
@@ -1182,8 +1260,8 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
         ) : (
           <div className="space-y-4">
             {beats.map((beat, i) => (
+              <div key={beat.id} id={`beat-${beat.id}`} className="scroll-mt-24">
               <BeatCard
-                key={beat.id}
                 beat={beat}
                 index={i}
                 total={beats.length}
@@ -1215,6 +1293,7 @@ export function BoardEditor({ initial, profile, concurrency }: { initial: BoardW
                 onApprove={(kind, id, on) => approve(kind === "image" ? "beat_image" : "beat_video", beat.id, id, on)}
                 approved={approved}
               />
+              </div>
             ))}
           </div>
         )}

@@ -108,3 +108,9 @@ select option:checked,
 select option:hover {
   background-color: var(--navy-elevated);
 }
+
+/* Sweep for progress bars that have no percentage to show. */
+@keyframes busy-sweep {
+  0% { left: -35%; }
+  100% { left: 100%; }
+}

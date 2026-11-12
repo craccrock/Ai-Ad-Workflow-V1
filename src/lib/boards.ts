@@ -149,7 +149,10 @@ function scriptParts(script: string): string[] {
   return parts;
 }
 
-export async function splitBoard(board: Board, subject: Subject | null, redo?: RedoDirection): Promise<{ beats: Beat[]; brainOutput: BrainOutput; usage: { input: number; output: number } }> {
+/** Live state of a split: how many writers there are, how many have finished, and how many beats exist so far. */
+export type SplitProgress = { parts: number; done: number; beats: number; writing: number };
+
+export async function splitBoard(board: Board, subject: Subject | null, redo?: RedoDirection, onProgress?: (p: SplitProgress) => void): Promise<{ beats: Beat[]; brainOutput: BrainOutput; usage: { input: number; output: number } }> {
   if (!process.env.ANTHROPIC_API_KEY) throw new HttpError(503, "ANTHROPIC_API_KEY is not set — add it to the environment to use the beat splitter");
   if (!board.script.trim()) throw new HttpError(400, "Paste a script first");
 
@@ -165,17 +168,39 @@ export async function splitBoard(board: Board, subject: Subject | null, redo?: R
   // 300 s request limit; in parallel each writer only has a few lines to cover, so the board lands in a fraction of the time.
   const client = new Anthropic();
   const parts = scriptParts(board.script);
+  // Per writer: beats written so far (counted from the text as it streams) and whether it has started or finished.
+  const live = parts.map(() => ({ beats: 0, writing: false, done: false, seen: 0 }));
+  const report = () => onProgress?.({ parts: parts.length, done: live.filter((l) => l.done).length, beats: live.reduce((a, l) => a + l.beats, 0), writing: live.filter((l) => l.writing && !l.done).length });
+  report();
   const results = await Promise.all(
     parts.map(async (part, i) => {
       const ask =
         parts.length === 1
           ? "Produce the JSON board for the SCRIPT above."
           : `The SCRIPT above is being boarded by ${parts.length} writers working at the same time, each on one consecutive part. You are writer ${i + 1} of ${parts.length}. Produce the JSON board for YOUR PART ONLY: the lines between the markers below. Cover every word of your part, in order, and nothing outside it. Read the whole SCRIPT for context so your beats fit what comes before and after, and return the same JSON shape as always (subject_lock, style_locks, beats), with beat ids starting at 1.${i > 0 ? " Your part starts mid-ad: do not re-introduce the speaker or open with an establishing shot unless the line calls for one." : ""}\n\n<<<YOUR PART\n${part}\nYOUR PART>>>`;
-      const message = await client.messages.stream({ model: settings.board_brain_model, max_tokens: 64000, system, messages: [{ role: "user", content: ask }] }).finalMessage();
+      const message = await client.messages
+        .stream({ model: settings.board_brain_model, max_tokens: 64000, system, messages: [{ role: "user", content: ask }] })
+        .on("text", (_delta, snapshot) => {
+          const l = live[i];
+          // Recount only every few hundred characters: each beat carries exactly one "image_prompt" key.
+          if (l.writing && snapshot.length - l.seen < 400) return;
+          l.writing = true;
+          l.seen = snapshot.length;
+          const beats = snapshot.split('"image_prompt"').length - 1;
+          if (beats !== l.beats || snapshot.length < 800) {
+            l.beats = beats;
+            report();
+          }
+        })
+        .finalMessage();
+      live[i].done = true;
       if (message.stop_reason === "refusal") throw new HttpError(502, "The brain declined this script");
       if (message.stop_reason === "max_tokens") throw new HttpError(502, `Claude ran out of room on part ${i + 1} of ${parts.length} of the script before it finished. Nothing was changed and your note is still in the box. Press the button again; if it repeats, tell Claude Code.`);
       const text = message.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("");
-      return { out: parseBrainJson(text), usage: message.usage };
+      const parsed = parseBrainJson(text);
+      live[i].beats = Array.isArray(parsed.beats) ? parsed.beats.length : live[i].beats;
+      report();
+      return { out: parsed, usage: message.usage };
     }),
   );
   const out: BrainOutput = { subject_lock: results[0].out.subject_lock, style_locks: results[0].out.style_locks, beats: results.flatMap((r) => (Array.isArray(r.out.beats) ? r.out.beats : [])) };

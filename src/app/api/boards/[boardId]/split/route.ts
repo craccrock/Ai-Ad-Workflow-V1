@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
-import { canEditBoard, getBoardForActor, loadBoardWithBeats, loadSubject, splitBoard, type RedoDirection } from "@/lib/boards";
+import { canEditBoard, getBoardForActor, loadBoardWithBeats, loadSubject, splitBoard, type RedoDirection, type SplitProgress } from "@/lib/boards";
 import { getSettings, setSettings } from "@/lib/settings";
 
 // The brain can take a couple of minutes on a long script.
@@ -38,17 +38,44 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
     }
 
     const subject = board.subject_id ? await loadSubject(board.subject_id) : null;
-    const { usage } = await splitBoard(board, subject, redo);
 
-    let remembered = false;
-    if (direction && parsed.data.remember) {
-      const current = (await getSettings()).image_prompt_rules.trim();
-      const line = `- ${direction.replace(/\s+/g, " ")}`;
-      if (!current.includes(line)) await setSettings({ image_prompt_rules: (current ? `${current}\n${line}` : line).slice(-20000) }, actor.profile.id);
-      remembered = true;
-    }
+    const run = async (onProgress?: (p: SplitProgress) => void) => {
+      const { usage } = await splitBoard(board, subject, redo, onProgress);
+      let remembered = false;
+      if (direction && parsed.data.remember) {
+        const current = (await getSettings()).image_prompt_rules.trim();
+        const line = `- ${direction.replace(/\s+/g, " ")}`;
+        if (!current.includes(line)) await setSettings({ image_prompt_rules: (current ? `${current}\n${line}` : line).slice(-20000) }, actor.profile.id);
+        remembered = true;
+      }
+      const full = await loadBoardWithBeats({ ...board, brain_output: null });
+      return { ...full, usage, remembered };
+    };
 
-    const full = await loadBoardWithBeats({ ...board, brain_output: null });
-    return Response.json({ ...full, usage, remembered });
+    // The board editor asks for a stream: one JSON object per line, "progress" as the writers work, then "done" or "error".
+    if (!request.headers.get("accept")?.includes("application/x-ndjson")) return Response.json(await run());
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: Record<string, unknown>) => {
+          try {
+            controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+          } catch {
+            // the client went away; the split still finishes and saves
+          }
+        };
+        try {
+          const result = await run((p) => send({ type: "progress", ...p }));
+          send({ type: "done", result });
+        } catch (e) {
+          send({ type: "error", message: e instanceof Error ? e.message : String(e), status: e instanceof HttpError ? e.status : 500 });
+        } finally {
+          try {
+            controller.close();
+          } catch {}
+        }
+      },
+    });
+    return new Response(stream, { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store, no-transform", "x-accel-buffering": "no" } });
   });
 }
