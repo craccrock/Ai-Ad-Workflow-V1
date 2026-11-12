@@ -32,6 +32,8 @@ const schema = z.object({
   board_default_model: z.string().min(1).max(80).optional(),
   board_video_prompt: z.string().min(50).max(60000).optional(),
   board_default_video_model: z.string().min(1).max(80).optional(),
+  board_default_video_duration: z.number().int().min(1).max(60).optional(),
+  board_default_video_resolution: z.string().min(1).max(20).optional(),
   board_avatar_prompt: z.string().min(50).max(60000).optional(),
   board_default_avatar_model: z.string().min(1).max(80).optional(),
   board_pronunciations: z.string().max(20000).optional(),

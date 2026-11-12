@@ -20,6 +20,9 @@ export type AppSettings = {
   board_video_prompt: string;
   /** Video model new boards start with. */
   board_default_video_model: string;
+  /** Clip length (seconds) and quality new boards start with; each is clamped to what the chosen model offers. */
+  board_default_video_duration: number;
+  board_default_video_resolution: string;
   /** System prompt for the avatar (A-roll talking-head) writer; {{SUBJECT_LOCK}}, {{DURATIONS}}, {{BEATS}} are filled in per run. */
   board_avatar_prompt: string;
   /** Talking-head video model new boards start with. */
@@ -44,6 +47,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   board_default_model: "nano-banana-pro",
   board_video_prompt: DEFAULT_VIDEO_PROMPT,
   board_default_video_model: "gemini-omni-1.2-flash",
+  board_default_video_duration: 6,
+  board_default_video_resolution: "1080p",
   board_avatar_prompt: DEFAULT_AVATAR_PROMPT,
   board_default_avatar_model: DEFAULT_AVATAR_MODEL,
   board_pronunciations: DEFAULT_PRONUNCIATIONS,
