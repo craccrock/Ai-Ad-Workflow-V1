@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { approvedExamplesBlock } from "@/lib/approved-examples";
+import { LIBRARY_LEGEND, libraryLine } from "@/lib/library-cards";
 import { HttpError, type Actor } from "@/lib/auth";
 import { serializeGeneration } from "@/lib/generations";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -63,15 +64,18 @@ export async function loadSubject(id: string): Promise<Subject | null> {
 
 // ─── the brain ───────────────────────────────────────────────────────────────
 
-/** "Category / filename" lines for every imported library asset, as the brain prompt expects. */
+/**
+ * One line per library asset for the brain: the "Category / filename" key it writes back, then the vision card.
+ * Assets the editor hid are left out; starred ones come first, then the best-scored.
+ */
 export async function libraryIndex(): Promise<{ lines: string[]; byKey: Map<string, Media> }> {
-  const { data } = await createAdminClient().from("media").select("*").not("folder", "is", null).eq("type", "image").order("folder").order("filename");
+  const { data } = await createAdminClient().from("media").select("*").not("folder", "is", null).eq("type", "image").gte("rating", 0).order("folder").order("filename").limit(2000);
   const byKey = new Map<string, Media>();
-  const lines: string[] = [];
-  for (const m of (data ?? []) as Media[]) {
-    const key = `${m.folder} / ${m.filename}`;
-    byKey.set(normalizeKey(key), m);
-    lines.push(key);
+  const rows = ((data ?? []) as Media[]).sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0) || (b.card?.quality ?? 0) - (a.card?.quality ?? 0));
+  const lines: string[] = rows.length ? [LIBRARY_LEGEND] : [];
+  for (const m of rows) {
+    byKey.set(normalizeKey(`${m.folder} / ${m.filename}`), m);
+    lines.push(libraryLine(m));
   }
   return { lines, byKey };
 }
@@ -81,6 +85,7 @@ const normalizeKey = (s: string) => s.toLowerCase().replace(/\.[a-z0-9]{2,4}$/i,
 /** Resolve a "Category / filename" the brain wrote back to a library row; tolerant of extensions and spacing. */
 export function resolveLibraryRef(ref: string | undefined | null, byKey: Map<string, Media>): Media | null {
   if (!ref) return null;
+  ref = ref.split(" :: ")[0]; // the brain sometimes copies the whole index line, card included
   const direct = byKey.get(normalizeKey(ref));
   if (direct) return direct;
   const needle = normalizeKey(ref.includes("/") ? ref.split("/").slice(1).join("/") : ref);

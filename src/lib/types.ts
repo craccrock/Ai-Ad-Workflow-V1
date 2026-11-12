@@ -97,6 +97,23 @@ export type GenerationParams = {
   extra?: Record<string, unknown>;
 };
 
+/** What Claude saw when it looked at a library image; the splitter reads this in place of the filename. */
+export type LibraryCard = {
+  summary: string;
+  subject: string;
+  framing: string;
+  style: "ugc_real" | "anatomy" | "clay" | "animated" | "product" | "other";
+  /** 1-5: how good a reference this is. */
+  quality: number;
+  use_as: ("pose" | "setting" | "as_is")[];
+  good_for: string;
+  issues: string;
+  model: string;
+  at: string;
+  /** Set when the image could not be described. */
+  failed?: boolean;
+};
+
 export type Media = {
   id: string;
   user_id: string;
@@ -111,6 +128,11 @@ export type Media = {
   folder?: string | null;
   tags?: string[];
   source_path?: string | null;
+  card?: LibraryCard | null;
+  /** 1 = starred (offered to the AI first), -1 = never offered to the AI, 0 = unrated. */
+  rating?: number;
+  /** Winners: the generation this library copy was made from. */
+  source_generation_id?: string | null;
   created_at: string;
 };
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { formatDistanceToNowStrict } from "date-fns";
-import { Download, Music, Sparkles, Trash2, Upload } from "lucide-react";
+import { Download, EyeOff, Loader2, Music, RotateCw, ScanEye, Sparkles, Star, Trash2, Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -19,7 +19,8 @@ import { cn } from "@/lib/utils";
 import { downloadAsWebp } from "@/lib/webp";
 
 type TypeFilter = "all" | "image" | "video" | "audio";
-type SourceFilter = "all" | "uploads" | "generated";
+type SourceFilter = "all" | "uploads" | "generated" | "winners" | "starred" | "hidden";
+type CardStatus = { total: number; described: number; remaining: number };
 
 export function Library({ profile }: { profile: Profile }) {
   const router = useRouter();
@@ -33,6 +34,54 @@ export function Library({ profile }: { profile: Profile }) {
   const [dragging, setDragging] = useState(false);
   const [selected, setSelected] = useState<ApiMedia | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [cards, setCards] = useState<CardStatus | null>(null);
+  const [describing, setDescribing] = useState(false);
+  const [busyCard, setBusyCard] = useState(false);
+  const stopDescribe = useRef(false);
+
+  useEffect(() => {
+    api<CardStatus>("/api/library/cards")
+      .then(setCards)
+      .catch(() => {});
+  }, []);
+
+  /** Has Claude look at every library image that has no card yet, a few per request, until none are left. */
+  async function describeAll() {
+    if (!cards?.remaining) return;
+    if (!window.confirm(`Have Claude look at ${cards.remaining} library image${cards.remaining === 1 ? "" : "s"} and write a card for each? This uses Claude API credits (one vision call per image) and takes a few minutes. You can leave it running.`)) return;
+    setDescribing(true);
+    stopDescribe.current = false;
+    let failures = 0;
+    try {
+      for (let left = cards.remaining; left > 0 && !stopDescribe.current; ) {
+        const res = await api<CardStatus & { described: number; failed: { filename: string; error: string }[] }>("/api/library/cards", { method: "POST", json: { limit: 8 } });
+        failures += res.failed.length;
+        setCards({ total: res.total, described: res.total - res.remaining, remaining: res.remaining });
+        left = res.remaining;
+      }
+      toast.success("Library described", { description: failures ? `${failures} image${failures === 1 ? "" : "s"} could not be read and were marked low quality.` : "Every image now has a card the splitter reads." });
+      void load(type, source, 1);
+    } catch (e) {
+      toast.error("The describe pass stopped", { description: `${e instanceof Error ? e.message : String(e)} Press the button again to continue where it left off.` });
+    } finally {
+      setDescribing(false);
+    }
+  }
+
+  /** Star, hide or clear a library image for the AI, or have its card rewritten. */
+  async function patchMedia(m: ApiMedia, json: { rating?: -1 | 0 | 1; describe?: boolean }) {
+    setBusyCard(true);
+    try {
+      const fresh = await api<ApiMedia>(`/api/media/${m.id}`, { method: "PATCH", json });
+      const merged = { ...m, ...fresh };
+      setItems((prev) => prev.map((p) => (p.id === m.id ? merged : p)));
+      setSelected((cur) => (cur?.id === m.id ? merged : cur));
+    } catch (e) {
+      toast.error("Couldn't update the image", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusyCard(false);
+    }
+  }
 
   const load = useCallback(async (t: TypeFilter, s: SourceFilter, p: number) => {
     const qs = new URLSearchParams({ page: String(p), limit: "48" });
@@ -148,8 +197,27 @@ export function Library({ profile }: { profile: Profile }) {
             { value: "all", label: "Everything" },
             { value: "uploads", label: "Uploads" },
             { value: "generated", label: "Generated" },
+            { value: "winners", label: "Winners" },
+            { value: "starred", label: "Starred" },
+            { value: "hidden", label: "Hidden from AI" },
           ]}
         />
+        {cards ? (
+          <div className="ml-auto flex items-center gap-3 text-[11px] text-muted">
+            <span title="Reference images in folders, which the splitter can pick from. A card is Claude's description of what the image actually shows.">
+              {cards.described} of {cards.total} reference images described
+            </span>
+            {describing ? (
+              <Button variant="danger" size="sm" onClick={() => (stopDescribe.current = true)}>
+                <Loader2 className="animate-spin" /> Stop · {cards.remaining} left
+              </Button>
+            ) : cards.remaining ? (
+              <Button variant="gold" size="sm" onClick={() => void describeAll()}>
+                <ScanEye /> Describe {cards.remaining} image{cards.remaining === 1 ? "" : "s"}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {loading && items.length === 0 ? (
@@ -185,6 +253,16 @@ export function Library({ profile }: { profile: Profile }) {
                     <Sparkles className="size-2.5" /> Generated
                   </Badge>
                 ) : null}
+                {m.rating === 1 ? (
+                  <span className="absolute right-1.5 top-1.5 rounded bg-navy/80 p-1 text-gold" title="Starred: offered to the AI first">
+                    <Star className="size-3 fill-current" />
+                  </span>
+                ) : m.rating === -1 ? (
+                  <span className="absolute right-1.5 top-1.5 rounded bg-navy/80 p-1 text-danger" title="Hidden from the AI">
+                    <EyeOff className="size-3" />
+                  </span>
+                ) : null}
+                {m.card && !m.card.failed ? <span className="absolute bottom-1.5 left-1.5 rounded bg-navy/80 px-1.5 font-mono text-[10px] text-cream-2" title="Claude's score for how good a reference this is">{m.card.quality}/5</span> : null}
                 {m.metadata?.duration_seconds ? (
                   <span className="absolute bottom-1.5 right-1.5 rounded bg-navy/80 px-1.5 font-mono text-[10px] text-cream-2">{m.metadata.duration_seconds.toFixed(1)}s</span>
                 ) : null}
@@ -245,6 +323,38 @@ export function Library({ profile }: { profile: Profile }) {
                     </dd>
                   </div>
                 </dl>
+                {selected.type === "image" && selected.folder ? (
+                  <div className="space-y-2 rounded-[6px] border border-hairline p-3 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] uppercase tracking-[0.08em] text-muted">What the AI sees</span>
+                      <button type="button" className="flex items-center gap-1 text-[11px] text-muted hover:text-cream" disabled={busyCard} onClick={() => void patchMedia(selected, { describe: true })} title="Uses one Claude vision call">
+                        {busyCard ? <Loader2 className="size-3 animate-spin" /> : <RotateCw className="size-3" />} {selected.card ? "Redo" : "Describe"}
+                      </button>
+                    </div>
+                    {selected.card && !selected.card.failed ? (
+                      <>
+                        <p className="text-cream">{selected.card.summary}</p>
+                        <p className="text-cream-2">
+                          Quality {selected.card.quality}/5 · {selected.card.style.replace("_", " ")} · use as: {selected.card.use_as.length ? selected.card.use_as.join(", ").replace("as_is", "as-is") : "nothing recommended"}
+                        </p>
+                        {selected.card.subject && selected.card.subject.toLowerCase() !== "none" ? <p className="text-muted">People: {selected.card.subject}</p> : null}
+                        {selected.card.framing ? <p className="text-muted">Framing: {selected.card.framing}</p> : null}
+                        {selected.card.good_for ? <p className="text-muted">Fits: {selected.card.good_for}</p> : null}
+                        {selected.card.issues && selected.card.issues.toLowerCase() !== "none" ? <p className="text-danger">Watch out: {selected.card.issues}</p> : null}
+                      </>
+                    ) : (
+                      <p className="text-muted">{selected.card?.failed ? selected.card.issues : "Not described yet, so the AI only has the filename to go on."}</p>
+                    )}
+                    <div className="grid grid-cols-2 gap-1.5 pt-1">
+                      <Button variant={selected.rating === 1 ? "gold" : "outline"} size="sm" disabled={busyCard} onClick={() => void patchMedia(selected, { rating: selected.rating === 1 ? 0 : 1 })} title="Starred images are offered to the AI first">
+                        <Star /> {selected.rating === 1 ? "Starred" : "Star"}
+                      </Button>
+                      <Button variant={selected.rating === -1 ? "danger" : "outline"} size="sm" disabled={busyCard} onClick={() => void patchMedia(selected, { rating: selected.rating === -1 ? 0 : -1 })} title="Hidden images are never offered to the AI">
+                        <EyeOff /> {selected.rating === -1 ? "Hidden" : "Hide from AI"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="flex flex-col gap-2">
                   {selected ? (
                     <Button variant="gold" onClick={() => router.push(`/?use=${selected.id}`)}>

@@ -1,4 +1,6 @@
+import { after } from "next/server";
 import { z } from "zod";
+import { promoteWinner } from "@/lib/library-cards";
 import { handleRoute, HttpError, requireActor } from "@/lib/auth";
 import { canEditBoard, getBoardForActor } from "@/lib/boards";
 import { generationSnapshot, logLearning, THUMBS_DOWN_TAGS } from "@/lib/learning";
@@ -64,6 +66,11 @@ export async function POST(request: Request, ctx: RouteContext<"/api/boards/[boa
       const corrections = ((fixes ?? []) as { direction: string | null }[]).map((f) => (f.direction ?? "").trim()).filter(Boolean);
       const takes = Array.isArray(row[idsCol]) ? (row[idsCol] as string[]).length : 1;
       await logLearning({ user_id: actor.profile.id, board_id: board.id, kind: "thumbs_up", target_type: v.target_type, target_id: v.target_id, generation_id: v.generation_id, model: snap.model, prompt: snap.prompt, meta: { vo: (row.vo as string | undefined) ?? "", takes, reprompts: corrections.length, corrections, one_shot: takes <= 1 && corrections.length === 0 } });
+      // An approved starter image joins the library's Winners folder (starred, with a vision card), so later boards can reference it.
+      if (v.target_type === "beat_image") {
+        const label = String(row.vo ?? "").trim();
+        after(() => promoteWinner({ userId: actor.profile.id, generationId: v.generation_id, label, prompt: snap.prompt, boardId: board.id, reason: "thumbs_up" }).catch((e) => console.error("promoteWinner", e)));
+      }
       return Response.json({ ok: true, approved: true });
     }
     const parsed = bodySchema.safeParse(raw);

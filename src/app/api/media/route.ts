@@ -7,7 +7,7 @@ export const maxDuration = 120;
 
 const listSchema = z.object({
   type: z.enum(["image", "video", "audio"]).optional(),
-  source: z.enum(["uploads", "generated"]).optional(),
+  source: z.enum(["uploads", "generated", "winners", "starred", "hidden"]).optional(),
   /** Imported B-roll folder name, e.g. "Cryo therapy treatment". */
   folder: z.string().max(200).optional(),
   /** Case-insensitive match on filename, folder or tags. */
@@ -31,6 +31,9 @@ export async function GET(request: Request) {
     if (q.type) query = query.eq("type", q.type);
     if (q.source === "uploads") query = query.is("generation_id", null);
     if (q.source === "generated") query = query.not("generation_id", "is", null);
+    if (q.source === "winners") query = query.eq("folder", "Winners");
+    if (q.source === "starred") query = query.eq("rating", 1);
+    if (q.source === "hidden") query = query.eq("rating", -1);
     if (q.folder) query = query.eq("folder", q.folder);
     if (q.q?.trim()) {
       const needle = q.q.trim().replace(/[%_,]/g, " ");
