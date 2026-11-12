@@ -4,7 +4,7 @@ import { AVATAR_SYLLABLES_PER_SECOND, avatarDurationFor, DEFAULT_AVATAR_MODEL, p
 import { getModel } from "@/config/models.config";
 import { HttpError } from "@/lib/auth";
 import { approvedExamplesBlock } from "@/lib/approved-examples";
-import { parseBrainJson, type BrainOutput } from "@/lib/boards";
+import type { BrainOutput } from "@/lib/boards";
 import { getSettings } from "@/lib/settings";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { imageBlockFromUrl } from "@/lib/vision";
@@ -82,7 +82,53 @@ export async function chunkScript(board: Board, beatLines: string[]): Promise<{ 
 
 // ─── prompt writing ──────────────────────────────────────────────────────────
 
-type AvatarBrainOutput = { beats?: { id?: string; video_prompt?: string }[] };
+/**
+ * Pulls { id, prompt } pairs out of whatever shape the writer replied in. The asked-for shape is
+ * {"beats":[{"id","video_prompt"}]}, but it sometimes answers with a bare array, one object per line, another list
+ * name ("chunks", "prompts") or another prompt key, and none of those should cost the editor a failed run.
+ */
+function readAvatarReply(text: string): { id: string | null; prompt: string }[] {
+  const body = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const candidates: unknown[] = [];
+  const tryParse = (t: string) => {
+    try {
+      candidates.push(JSON.parse(t));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const span = (open: string, close: string) => (body.indexOf(open) >= 0 && body.lastIndexOf(close) > body.indexOf(open) ? body.slice(body.indexOf(open), body.lastIndexOf(close) + 1) : "");
+  const firstObj = body.indexOf("{");
+  const firstArr = body.indexOf("[");
+  const order = firstArr >= 0 && (firstObj < 0 || firstArr < firstObj) ? [span("[", "]"), span("{", "}")] : [span("{", "}"), span("[", "]")];
+  if (!order.some((t) => t && tryParse(t))) {
+    // One JSON object per line.
+    for (const line of body.split(/\r?\n/)) {
+      const t = line.trim().replace(/,$/, "");
+      if (t.startsWith("{")) tryParse(t);
+    }
+  }
+  const out: { id: string | null; prompt: string }[] = [];
+  const take = (v: unknown, key?: string) => {
+    if (typeof v === "string") {
+      if (key && v.trim().length > 40) out.push({ id: key, prompt: v.trim() });
+      return;
+    }
+    if (!v || typeof v !== "object") return;
+    const o = v as Record<string, unknown>;
+    const prompt = [o.video_prompt, o.avatar_prompt, o.prompt, o.text].find((p): p is string => typeof p === "string" && p.trim().length > 0);
+    if (prompt) {
+      const id = [o.id, o.beat_id, o.chunk_id, key].find((x) => typeof x === "string" || typeof x === "number");
+      out.push({ id: id == null ? null : String(id), prompt: prompt.trim() });
+      return;
+    }
+    if (Array.isArray(v)) v.forEach((x) => take(x));
+    else for (const [k, x] of Object.entries(o)) take(x, k);
+  };
+  candidates.forEach((c) => take(c));
+  return out;
+}
 
 /**
  * Writes (or rewrites) the talking-head prompt for the given chunks in one Claude call, from the avatar still.
@@ -143,13 +189,16 @@ export async function writeAvatarPrompts(
   if (message.stop_reason === "refusal") throw new HttpError(502, "The brain declined these chunks");
   if (message.stop_reason === "max_tokens") throw new HttpError(502, "Too many chunks for one pass — try a smaller batch");
   const text = message.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("");
-  const out = parseBrainJson(text) as unknown as AvatarBrainOutput;
+  const replies = readAvatarReply(text);
   const prompts: Record<string, string> = {};
   const wanted = new Set(targets.map((c) => c.id));
-  for (const b of out.beats ?? []) {
-    if (b.id && wanted.has(b.id) && b.video_prompt?.trim()) prompts[b.id] = b.video_prompt.trim();
+  for (const r of replies) if (r.id && wanted.has(r.id)) prompts[r.id] = r.prompt;
+  // No usable ids (it numbered them, or left them out) but one prompt per chunk: they are in the order asked.
+  if (!Object.keys(prompts).length && replies.length === targets.length) targets.forEach((c, i) => (prompts[c.id] = replies[i].prompt));
+  if (!Object.keys(prompts).length) {
+    console.error("avatar prompts: unreadable reply", JSON.stringify({ stop: message.stop_reason, chars: text.length, found: replies.length, head: text.slice(0, 600), tail: text.slice(-300) }));
+    throw new HttpError(502, text.trim() ? `Claude replied, but not in a form the studio could read (${replies.length} prompts found for ${targets.length} chunks). Nothing was changed. Press Write avatar prompts again.` : "Claude returned an empty reply. Nothing was changed. Press Write avatar prompts again.", text.slice(0, 300));
   }
-  if (!Object.keys(prompts).length) throw new HttpError(502, "The brain returned no avatar prompts");
 
   const admin = createAdminClient();
   await Promise.all(Object.entries(prompts).map(([id, video_prompt]) => admin.from("avatar_chunks").update({ video_prompt }).eq("id", id)));
